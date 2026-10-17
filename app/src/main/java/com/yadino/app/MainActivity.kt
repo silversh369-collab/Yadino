@@ -1,4 +1,3 @@
-
 package com.yadino.app
 
 import android.app.Activity
@@ -36,9 +35,8 @@ class MainActivity : AppCompatActivity() {
         val tasks: MutableList<Task> = mutableListOf()
     )
 
-    private val categories = listOf(
-        "عمومی", "کار", "شخصی", "خرید", "درس", "ایده‌ها"
-    )
+    private val categories =
+        listOf("عمومی", "کار", "شخصی", "خرید", "درس", "ایده‌ها")
 
     private lateinit var prefs: android.content.SharedPreferences
     private lateinit var titleInput: EditText
@@ -48,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var privateCheck: CheckBox
     private lateinit var notesContainer: LinearLayout
     private lateinit var statusText: TextView
+    private var mainScroll: ScrollView? = null
 
     private val notes = mutableListOf<Note>()
     private var speechTarget: EditText? = null
@@ -207,8 +206,8 @@ class MainActivity : AppCompatActivity() {
                 .setTitle("دستیار هوشمند یادینو")
                 .setMessage(
                     "قابلیت‌های اصلی یادینو به‌صورت محلی کار می‌کنند. " +
-                    "برای فعال شدن هوش مصنوعی آنلاین باید سرویس هوش مصنوعی " +
-                    "و یک ارتباط امن سمت سرور به پروژه اضافه شود."
+                        "برای فعال شدن هوش مصنوعی آنلاین باید سرویس هوش مصنوعی " +
+                        "و یک ارتباط امن سمت سرور به پروژه اضافه شود."
                 )
                 .setPositiveButton("متوجه شدم", null)
                 .show()
@@ -230,22 +229,27 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(savedTitle, matchWrap())
 
-        val scroll = ScrollView(this)
         notesContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
-        scroll.addView(notesContainer)
+        root.addView(notesContainer, matchWrap())
 
-        root.addView(
-            scroll,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f
+        // تمام صفحه داخل یک اسکرول قرار می‌گیرد.
+        mainScroll = ScrollView(this).apply {
+            isFillViewport = true
+            isVerticalScrollBarEnabled = true
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            addView(
+                root,
+                ScrollView.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
             )
-        )
+        }
 
-        setContentView(root)
+        setContentView(mainScroll)
         updateStatus()
     }
 
@@ -304,7 +308,11 @@ class MainActivity : AppCompatActivity() {
         privateCheck.isChecked = false
         categorySpinner.setSelection(0)
 
-        Toast.makeText(this, "یادداشت ذخیره شد ❤️", Toast.LENGTH_SHORT).show()
+        Toast.makeText(
+            this,
+            "یادداشت ذخیره شد ❤️",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     private fun splitTasks(text: String): List<String> {
@@ -459,7 +467,11 @@ class MainActivity : AppCompatActivity() {
             notes.removeAll { it.id == note.id }
             saveNotes()
             renderNotes()
-            Toast.makeText(this, "یادداشت حذف شد", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this,
+                "یادداشت حذف شد",
+                Toast.LENGTH_SHORT
+            ).show()
         }
 
         if (note.isPrivate) {
@@ -520,10 +532,16 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("لغو", null)
             .setPositiveButton("تأیید") { _, _ ->
                 val savedHash = prefs.getString(PIN_KEY, null)
-                if (savedHash != null && savedHash == hashPin(pinInput.text.toString())) {
+                if (savedHash != null &&
+                    savedHash == hashPin(pinInput.text.toString())
+                ) {
                     onSuccess()
                 } else {
-                    Toast.makeText(this, "رمز اشتباه است", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        this,
+                        "رمز اشتباه است",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
             .show()
@@ -645,7 +663,10 @@ class MainActivity : AppCompatActivity() {
                     val taskObj = taskArray.getJSONObject(j)
                     note.tasks.add(
                         Task(
-                            id = taskObj.optString("id", UUID.randomUUID().toString()),
+                            id = taskObj.optString(
+                                "id",
+                                UUID.randomUUID().toString()
+                            ),
                             text = taskObj.optString("text", ""),
                             done = taskObj.optBoolean("done", false)
                         )
@@ -667,7 +688,8 @@ class MainActivity : AppCompatActivity() {
     private fun updateStatus() {
         val allTasks = notes.flatMap { it.tasks }
         statusText.text =
-            "یادداشت‌ها: ${notes.size}  |  کارهای انجام‌شده: ${allTasks.count { it.done }} از ${allTasks.size}"
+            "یادداشت‌ها: ${notes.size}  |  کارهای انجام‌شده: " +
+                "${allTasks.count { it.done }} از ${allTasks.size}"
     }
 
     private fun editText(hintText: String): EditText {
