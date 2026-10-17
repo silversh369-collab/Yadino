@@ -1,192 +1,218 @@
 package com.yadino.app
 
-import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Bundle
 import android.speech.RecognizerIntent
-import android.speech.tts.TextToSpeech
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
-import android.widget.Button
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
-import android.widget.Toast
-import androidx.activity.ComponentActivity
-import androidx.activity.result.contract.ActivityResultContracts
+import android.widget.*
+import androidx.appcompat.app.AppCompatActivity
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import org.json.JSONArray
+import org.json.JSONObject
+import java.security.MessageDigest
 import java.util.Locale
+import java.util.UUID
 
-class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
+class MainActivity : AppCompatActivity() {
 
-    private lateinit var root: LinearLayout
-    private lateinit var input: EditText
+    private data class Task(
+        val id: String = UUID.randomUUID().toString(),
+        var text: String,
+        var done: Boolean = false
+    )
+
+    private data class Note(
+        val id: String = UUID.randomUUID().toString(),
+        var title: String,
+        var body: String,
+        var category: String,
+        var isPrivate: Boolean,
+        val tasks: MutableList<Task> = mutableListOf()
+    )
+
+    private val categories = listOf(
+        "عمومی",
+        "کار",
+        "شخصی",
+        "خرید",
+        "درس",
+        "ایده‌ها"
+    )
+
+    private lateinit var prefs: android.content.SharedPreferences
+    private lateinit var titleInput: EditText
+    private lateinit var bodyInput: EditText
+    private lateinit var taskInput: EditText
+    private lateinit var categorySpinner: Spinner
+    private lateinit var privateCheck: CheckBox
     private lateinit var notesContainer: LinearLayout
-    private lateinit var tts: TextToSpeech
+    private lateinit var statusText: TextView
 
-    private val prefs by lazy {
-        getSharedPreferences("yadino_notes", MODE_PRIVATE)
+    private val notes = mutableListOf<Note>()
+    private var speechTarget: EditText? = null
+
+    companion object {
+        private const val SPEECH_REQUEST = 401
+        private const val DATA_KEY = "notes_json"
+        private const val PIN_KEY = "pin_hash"
     }
-
-    private val notes = mutableListOf<String>()
-    private var ttsReady = false
-
-    private val speechLauncher =
-        registerForActivityResult(
-            ActivityResultContracts.StartActivityForResult()
-        ) { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
-                val spoken = result.data
-                    ?.getStringArrayListExtra(
-                        RecognizerIntent.EXTRA_RESULTS
-                    )
-                    ?.firstOrNull()
-
-                if (!spoken.isNullOrBlank()) {
-                    input.setText(spoken)
-                    input.setSelection(input.text.length)
-                }
-            }
-        }
-
-    private val audioPermissionLauncher =
-        registerForActivityResult(
-            ActivityResultContracts.RequestPermission()
-        ) { granted ->
-            if (granted) {
-                startSpeechRecognition()
-            } else {
-                toast("برای ورودی صوتی اجازهٔ میکروفون لازم است.")
-            }
-        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        tts = TextToSpeech(this, this)
-        loadNotes()
-        buildInterface()
-    }
+        try {
+            val masterKey = MasterKey.Builder(this)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
 
-    override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) {
-            val result = tts.setLanguage(Locale("fa", "IR"))
-            ttsReady =
-                result != TextToSpeech.LANG_MISSING_DATA &&
-                result != TextToSpeech.LANG_NOT_SUPPORTED
-        }
-    }
-
-    private fun buildInterface() {
-        root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(22), dp(20), dp(12))
-            setBackgroundColor(Color.rgb(245, 247, 252))
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-        }
-
-        val title = TextView(this).apply {
-            text = "یادینو"
-            textSize = 30f
-            setTextColor(Color.rgb(44, 65, 130))
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-        }
-        root.addView(title, matchWrap())
-
-        val subtitle = TextView(this).apply {
-            text = "دستیار یادداشت‌های تو"
-            textSize = 15f
-            setTextColor(Color.DKGRAY)
-            gravity = Gravity.CENTER
-            setPadding(0, dp(4), 0, dp(18))
-        }
-        root.addView(subtitle, matchWrap())
-
-        input = EditText(this).apply {
-            hint = "یادداشتت رو اینجا بنویس..."
-            textSize = 16f
-            gravity = Gravity.TOP or Gravity.RIGHT
-            minLines = 3
-            maxLines = 5
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            background = rounded(Color.WHITE, 14)
-        }
-
-        root.addView(
-            input,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(120)
+            prefs = EncryptedSharedPreferences.create(
+                this,
+                "yadino_secure_storage",
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
-        )
-
-        addButton("🎙️ گفتن یادداشت") {
-            if (
-                checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED
-            ) {
-                startSpeechRecognition()
-            } else {
-                audioPermissionLauncher.launch(
-                    Manifest.permission.RECORD_AUDIO
-                )
-            }
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "خطا در راه‌اندازی فضای امن: ${e.message}",
+                Toast.LENGTH_LONG
+            ).show()
+            finish()
+            return
         }
 
-        addButton("💾 ذخیرهٔ یادداشت") {
-            saveNote()
-        }
+        loadNotes()
+        buildScreen()
+        renderNotes()
+    }
 
-        addButton("🔊 خواندن متن با صدا") {
-            val text = input.text.toString().trim()
-
-            if (text.isNotEmpty()) {
-                if (ttsReady) {
-                    tts.speak(
-                        text,
-                        TextToSpeech.QUEUE_FLUSH,
-                        null,
-                        "yadino_read"
-                    )
-                } else {
-                    toast("صدای فارسی روی دستگاه آماده نیست.")
-                }
-            } else {
-                toast("اول متنی بنویس.")
-            }
-        }
-
-        val heading = TextView(this).apply {
-            text = "یادداشت‌های ذخیره‌شده"
-            textSize = 19f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.rgb(40, 48, 70))
-            setPadding(0, dp(18), 0, dp(10))
-        }
-        root.addView(heading, matchWrap())
-
-        val scroll = ScrollView(this)
-
-        notesContainer = LinearLayout(this).apply {
+    private fun buildScreen() {
+        val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(16), dp(12), dp(16), dp(16))
+            setBackgroundColor(0xFFF5F7FB.toInt())
         }
 
-        scroll.addView(
-            notesContainer,
-            ViewGroup.LayoutParams(
+        val header = TextView(this).apply {
+            text = "یادینو"
+            textSize = 28f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF263A73.toInt())
+            setPadding(0, dp(8), 0, dp(4))
+        }
+        root.addView(
+            header,
+            LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         )
 
+        val subtitle = TextView(this).apply {
+            text = "یادداشت‌ها و کارهایت را مرتب کن"
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF606A7B.toInt())
+            setPadding(0, 0, 0, dp(12))
+        }
+        root.addView(subtitle)
+
+        titleInput = editText("عنوان یادداشت")
+        root.addView(titleInput, matchWrap())
+
+        categorySpinner = Spinner(this)
+        val adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            categories
+        )
+        adapter.setDropDownViewResource(
+            android.R.layout.simple_spinner_dropdown_item
+        )
+        categorySpinner.adapter = adapter
+        root.addView(categorySpinner, matchWrap())
+
+        bodyInput = editText("متن یادداشت...")
+        bodyInput.minLines = 3
+        bodyInput.gravity = Gravity.TOP or Gravity.START
+        root.addView(bodyInput, matchWrap())
+
+        val voiceButton = button("🎙 تبدیل گفتار به متن")
+        voiceButton.setOnClickListener {
+            speechTarget = bodyInput
+            startSpeechRecognition()
+        }
+        root.addView(voiceButton, matchWrap())
+
+        privateCheck = CheckBox(this).apply {
+            text = "یادداشت خصوصی (محافظت با رمز)"
+            textSize = 15f
+        }
+        root.addView(privateCheck, matchWrap())
+
+        val taskTitle = TextView(this).apply {
+            text = "کارهای این یادداشت"
+            textSize = 18f
+            setTextColor(0xFF263A73.toInt())
+            setPadding(0, dp(8), 0, dp(4))
+        }
+        root.addView(taskTitle)
+
+        taskInput = editText("کار جدید؛ مثلاً خرید نان")
+        root.addView(taskInput, matchWrap())
+
+        val taskVoiceButton = button("🎙 گفتن کار با صدا")
+        taskVoiceButton.setOnClickListener {
+            speechTarget = taskInput
+            startSpeechRecognition()
+        }
+        root.addView(taskVoiceButton, matchWrap())
+
+        val saveButton = button("＋ ذخیره یادداشت")
+        saveButton.setOnClickListener { saveCurrentNote() }
+        root.addView(saveButton, matchWrap())
+
+        val aiButton = button("✨ دستیار هوشمند آنلاین")
+        aiButton.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("دستیار هوشمند یادینو")
+                .setMessage(
+                    "قابلیت‌های اصلی یادینو به‌صورت محلی کار می‌کنند. " +
+                    "برای فعال شدن هوش مصنوعی آنلاین باید سرویس هوش مصنوعی " +
+                    "و یک ارتباط امن سمت سرور به پروژه اضافه شود."
+                )
+                .setPositiveButton("متوجه شدم", null)
+                .show()
+        }
+        root.addView(aiButton, matchWrap())
+
+        statusText = TextView(this).apply {
+            textSize = 14f
+            setTextColor(0xFF475569.toInt())
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        root.addView(statusText)
+
+        val savedTitle = TextView(this).apply {
+            text = "یادداشت‌های ذخیره‌شده"
+            textSize = 21f
+            setTextColor(0xFF263A73.toInt())
+            setPadding(0, dp(12), 0, dp(8))
+        }
+        root.addView(savedTitle)
+
+        val scroll = ScrollView(this)
+        notesContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        scroll.addView(notesContainer)
         root.addView(
             scroll,
             LinearLayout.LayoutParams(
@@ -197,216 +223,422 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         )
 
         setContentView(root)
-        renderNotes()
+        updateStatus()
     }
 
-    private fun addButton(label: String, action: () -> Unit) {
-        val button = Button(this).apply {
-            text = label
-            textSize = 15f
-            isAllCaps = false
-            setTextColor(Color.WHITE)
-            background = rounded(Color.rgb(66, 91, 190), 12)
-            setOnClickListener {
-                action()
-            }
-        }
+    private fun saveCurrentNote() {
+        val title = titleInput.text.toString().trim()
+        val body = bodyInput.text.toString().trim()
+        val taskText = taskInput.text.toString().trim()
+        val category = categorySpinner.selectedItem?.toString() ?: "عمومی"
+        val isPrivate = privateCheck.isChecked
 
-        val params = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(52)
-        ).apply {
-            topMargin = dp(9)
-        }
-
-        root.addView(button, params)
-    }
-
-    private fun saveNote() {
-        val text = input.text.toString().trim()
-
-        if (text.isEmpty()) {
-            toast("اول یک یادداشت بنویس.")
+        if (title.isBlank() && body.isBlank() && taskText.isBlank()) {
+            Toast.makeText(
+                this,
+                "اول عنوان، متن یا یک کار وارد کن",
+                Toast.LENGTH_SHORT
+            ).show()
             return
         }
 
-        notes.add(0, text)
-        persistNotes()
-        renderNotes()
-        input.text.clear()
-        toast("یادداشت ذخیره شد ❤️")
-    }
-
-    private fun loadNotes() {
-        val saved = prefs.getString("items", "[]") ?: "[]"
-
-        try {
-            val array = JSONArray(saved)
-
-            for (i in 0 until array.length()) {
-                notes.add(array.getString(i))
+        if (isPrivate && prefs.getString(PIN_KEY, null) == null) {
+            showSetPinDialog {
+                createNote(title, body, category, isPrivate, taskText)
             }
-        } catch (_: Exception) {
-            notes.clear()
+        } else {
+            createNote(title, body, category, isPrivate, taskText)
         }
     }
 
-    private fun persistNotes() {
-        val array = JSONArray()
+    private fun createNote(
+        title: String,
+        body: String,
+        category: String,
+        isPrivate: Boolean,
+        taskText: String
+    ) {
+        val finalTitle = title.ifBlank { "یادداشت بدون عنوان" }
 
-        notes.forEach { note ->
-            array.put(note)
+        val note = Note(
+            title = finalTitle,
+            body = body,
+            category = category,
+            isPrivate = isPrivate
+        )
+
+        if (taskText.isNotBlank()) {
+            splitTasks(taskText).forEach {
+                note.tasks.add(Task(text = it))
+            }
         }
 
-        prefs.edit()
-            .putString("items", array.toString())
-            .apply()
+        notes.add(0, note)
+        saveNotes()
+        renderNotes()
+
+        titleInput.text.clear()
+        bodyInput.text.clear()
+        taskInput.text.clear()
+        privateCheck.isChecked = false
+        categorySpinner.setSelection(0)
+
+        Toast.makeText(this, "یادداشت ذخیره شد ❤️", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun splitTasks(text: String): List<String> {
+        return text
+            .replace("برو سر خط بعدی", "\n", ignoreCase = true)
+            .replace("خط بعدی", "\n", ignoreCase = true)
+            .replace("کار بعدی", "\n", ignoreCase = true)
+            .split('\n')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .map {
+                it.removePrefix("•").trim()
+                    .replace(Regex("^\\d+[.)\\-،]\\s*"), "")
+            }
+            .filter { it.isNotBlank() }
     }
 
     private fun renderNotes() {
-        if (!::notesContainer.isInitialized) return
-
         notesContainer.removeAllViews()
 
         if (notes.isEmpty()) {
             val empty = TextView(this).apply {
-                text = "هنوز یادداشتی نداری."
+                text = "هنوز یادداشتی نداری. اولین یادداشتت رو بساز!"
                 textSize = 15f
-                setTextColor(Color.GRAY)
-                gravity = Gravity.CENTER
-                setPadding(0, dp(20), 0, dp(20))
+                setPadding(dp(8), dp(12), dp(8), dp(12))
+                setTextColor(0xFF64748B.toInt())
             }
-
-            notesContainer.addView(empty, matchWrap())
+            notesContainer.addView(empty)
+            updateStatus()
             return
         }
 
-        notes.forEachIndexed { index, note ->
+        notes.forEach { note ->
             val card = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(dp(12), dp(10), dp(12), dp(8))
-                background = rounded(Color.WHITE, 12)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                setBackgroundColor(0xFFFFFFFF.toInt())
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
             }
 
-            val content = TextView(this).apply {
-                text = note
-                textSize = 16f
-                setTextColor(Color.rgb(35, 40, 55))
+            val cardParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            cardParams.setMargins(0, 0, 0, dp(10))
+
+            val heading = TextView(this).apply {
+                text = if (note.isPrivate) {
+                    "🔒 ${note.title}"
+                } else {
+                    note.title
+                }
+                textSize = 19f
+                setTextColor(0xFF263A73.toInt())
             }
+            card.addView(heading)
 
-            card.addView(content, matchWrap())
-
-            val actions = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.END
+            val category = TextView(this).apply {
+                text = "دسته‌بندی: ${note.category}"
+                textSize = 13f
+                setTextColor(0xFF64748B.toInt())
+                setPadding(0, dp(3), 0, dp(6))
             }
+            card.addView(category)
 
-            val readButton = Button(this).apply {
-                text = "🔊 خواندن"
-                isAllCaps = false
+            if (note.isPrivate) {
+                val lockedMessage = TextView(this).apply {
+                    text = "محتوای این یادداشت خصوصی است."
+                    textSize = 14f
+                    setTextColor(0xFF475569.toInt())
+                }
+                card.addView(lockedMessage)
 
-                setOnClickListener {
-                    if (ttsReady) {
-                        tts.speak(
-                            note,
-                            TextToSpeech.QUEUE_FLUSH,
-                            null,
-                            "note_$index"
-                        )
-                    } else {
-                        toast("صدای فارسی روی دستگاه آماده نیست.")
+                val unlockButton = button("🔓 باز کردن یادداشت")
+                unlockButton.setOnClickListener {
+                    showVerifyPinDialog {
+                        showPrivateNote(note)
                     }
                 }
+                card.addView(unlockButton)
+            } else {
+                showNoteContent(card, note)
             }
 
-            val deleteButton = Button(this).apply {
-                text = "🗑 حذف"
-                isAllCaps = false
+            val deleteButton = button("حذف یادداشت")
+            deleteButton.setOnClickListener {
+                confirmDelete(note)
+            }
+            card.addView(deleteButton)
 
-                setOnClickListener {
-                    notes.removeAt(index)
-                    persistNotes()
+            notesContainer.addView(card, cardParams)
+        }
+
+        updateStatus()
+    }
+
+    private fun showNoteContent(card: LinearLayout, note: Note) {
+        if (note.body.isNotBlank()) {
+            val body = TextView(this).apply {
+                text = note.body
+                textSize = 15f
+                setTextColor(0xFF334155.toInt())
+                setPadding(0, dp(4), 0, dp(8))
+            }
+            card.addView(body)
+        }
+
+        renderTasks(card, note)
+    }
+
+    private fun showPrivateNote(note: Note) {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+
+        val body = TextView(this).apply {
+            text = note.body.ifBlank { "متنی ثبت نشده است." }
+            textSize = 16f
+        }
+        container.addView(body)
+
+        renderTasks(container, note)
+
+        AlertDialog.Builder(this)
+            .setTitle("🔒 ${note.title}")
+            .setView(container)
+            .setPositiveButton("بستن", null)
+            .show()
+    }
+
+    private fun renderTasks(container: LinearLayout, note: Note) {
+        if (note.tasks.isEmpty()) return
+
+        val completed = note.tasks.count { it.done }
+        val progress = TextView(this).apply {
+            text = "پیشرفت: $completed از ${note.tasks.size} کار انجام شده"
+            textSize = 14f
+            setTextColor(0xFF25634A.toInt())
+            setPadding(0, dp(4), 0, dp(4))
+        }
+        container.addView(progress)
+
+        note.tasks.forEachIndexed { index, task ->
+            val checkbox = CheckBox(this).apply {
+                text = "${index + 1}. ${task.text}"
+                isChecked = task.done
+                textSize = 14f
+                setOnCheckedChangeListener { _, checked ->
+                    task.done = checked
+                    saveNotes()
                     renderNotes()
                 }
             }
-
-            actions.addView(readButton)
-            actions.addView(deleteButton)
-            card.addView(actions, matchWrap())
-
-            val params = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dp(10)
-            }
-
-            notesContainer.addView(card, params)
+            container.addView(checkbox)
         }
     }
 
+    private fun confirmDelete(note: Note) {
+        val action = {
+            notes.removeAll { it.id == note.id }
+            saveNotes()
+            renderNotes()
+            Toast.makeText(this, "یادداشت حذف شد", Toast.LENGTH_SHORT).show()
+        }
+
+        if (note.isPrivate) {
+            showVerifyPinDialog {
+                AlertDialog.Builder(this)
+                    .setTitle("حذف یادداشت")
+                    .setMessage("این یادداشت برای همیشه حذف شود؟")
+                    .setNegativeButton("لغو", null)
+                    .setPositiveButton("حذف") { _, _ -> action() }
+                    .show()
+            }
+        } else {
+            AlertDialog.Builder(this)
+                .setTitle("حذف یادداشت")
+                .setMessage("این یادداشت برای همیشه حذف شود؟")
+                .setNegativeButton("لغو", null)
+                .setPositiveButton("حذف") { _, _ -> action() }
+                .show()
+        }
+    }
+
+    private fun showSetPinDialog(onSuccess: () -> Unit) {
+        val pinInput = EditText(this).apply {
+            hint = "رمز عددی، حداقل ۴ رقم"
+            inputType = 2
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("ساخت رمز یادداشت خصوصی")
+            .setMessage("این رمز برای باز کردن یادداشت‌های خصوصی استفاده می‌شود.")
+            .setView(pinInput)
+            .setNegativeButton("لغو", null)
+            .setPositiveButton("ذخیره رمز") { _, _ ->
+                val pin = pinInput.text.toString()
+                if (pin.length < 4 || pin.any { !it.isDigit() }) {
+                    Toast.makeText(
+                        this,
+                        "رمز باید حداقل ۴ رقم باشد",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    prefs.edit().putString(PIN_KEY, hashPin(pin)).apply()
+                    onSuccess()
+                }
+            }
+            .show()
+    }
+
+    private fun showVerifyPinDialog(onSuccess: () -> Unit) {
+        val pinInput = EditText(this).apply {
+            hint = "رمز خصوصی"
+            inputType = 2
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("باز کردن یادداشت خصوصی")
+            .setView(pinInput)
+            .setNegativeButton("لغو", null)
+            .setPositiveButton("تأیید") { _, _ ->
+                val savedHash = prefs.getString(PIN_KEY, null)
+                if (savedHash != null && savedHash == hashPin(pinInput.text.toString())) {
+                    onSuccess()
+                } else {
+                    Toast.makeText(
+                        this,
+                        "رمز اشتباه است",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+            .show()
+    }
+
+    private fun hashPin(pin: String): String {
+        val bytes = MessageDigest.getInstance("SHA-256")
+            .digest(pin.toByteArray(Charsets.UTF_8))
+
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
     private fun startSpeechRecognition() {
-        val intent = Intent(
-            RecognizerIntent.ACTION_RECOGNIZE_SPEECH
-        ).apply {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(
                 RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
             )
-            putExtra(
-                RecognizerIntent.EXTRA_LANGUAGE,
-                "fa-IR"
-            )
-            putExtra(
-                RecognizerIntent.EXTRA_PROMPT,
-                "صحبت کن..."
-            )
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "fa-IR")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "فارسی صحبت کن...")
         }
 
         try {
-            speechLauncher.launch(intent)
-        } catch (_: Exception) {
-            toast("برنامهٔ تشخیص گفتار روی دستگاه در دسترس نیست.")
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, SPEECH_REQUEST)
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "تشخیص گفتار در این گوشی در دسترس نیست.",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
-    private fun rounded(
-        color: Int,
-        radius: Int
-    ): GradientDrawable {
-        return GradientDrawable().apply {
-            setColor(color)
-            cornerRadius = dp(radius).toFloat()
+    @Deprecated("Uses the speech recognition activity result API")
+    override fun onActivityResult(
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?
+    ) {
+        super.onActivityResult(requestCode, resultCode, data)
+
+        if (requestCode == SPEECH_REQUEST && resultCode == Activity.RESULT_OK) {
+            val results = data?.getStringArrayListExtra(
+                RecognizerIntent.EXTRA_RESULTS
+            )
+            val spoken = results?.firstOrNull()?.trim().orEmpty()
+
+            if (spoken.isNotBlank()) {
+                val target = speechTarget ?: bodyInput
+                val existing = target.text.toString()
+
+                val processed = spoken
+                    .replace("برو سر خط بعدی", "\n", ignoreCase = true)
+                    .replace("خط بعدی", "\n", ignoreCase = true)
+
+                target.setText(
+                    if (existing.isBlank()) processed
+                    else "$existing\n$processed"
+                )
+                target.setSelection(target.text.length)
+            }
         }
     }
 
-    private fun matchWrap(): LinearLayout.LayoutParams {
-        return LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-    }
+    private fun saveNotes() {
+        val array = JSONArray()
 
-    private fun dp(value: Int): Int {
-        return (
-            value * resources.displayMetrics.density
-        ).toInt()
-    }
+        notes.forEach { note ->
+            val taskArray = JSONArray()
 
-    private fun toast(message: String) {
-        Toast.makeText(
-            this,
-            message,
-            Toast.LENGTH_SHORT
-        ).show()
-    }
+            note.tasks.forEach { task ->
+                taskArray.put(
+                    JSONObject().apply {
+                        put("id", task.id)
+                        put("text", task.text)
+                        put("done", task.done)
+                    }
+                )
+            }
 
-    override fun onDestroy() {
-        if (::tts.isInitialized) {
-            tts.stop()
-            tts.shutdown()
+            array.put(
+                JSONObject().apply {
+                    put("id", note.id)
+                    put("title", note.title)
+                    put("body", note.body)
+                    put("category", note.category)
+                    put("private", note.isPrivate)
+                    put("tasks", taskArray)
+                }
+            )
         }
 
-        super.onDestroy()
+        prefs.edit().putString(DATA_KEY, array.toString()).apply()
     }
-}
+
+    private fun loadNotes() {
+        notes.clear()
+
+        val raw = prefs.getString(DATA_KEY, null) ?: return
+
+        try {
+            val array = JSONArray(raw)
+
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                val note = Note(
+                    id = obj.optString("id", UUID.randomUUID().toString()),
+                    title = obj.optString("title", "یادداشت"),
+                    body = obj.optString("body", ""),
+                    category = obj.optString("category", "عمومی"),
+                    isPrivate = obj.optBoolean("private", false)
+                )
+
+                val taskArray = obj.optJSONArray("tasks") ?: JSONArray()
+
+                for (j in 0 until taskArray.length()) {
+                    val taskObj = taskArray.getJSONObject(j)
+                    note.tasks.add(
+                        Task(
+                            id = taskObj.optString(
+                                "id",
+                                UUID.randomUUID().toString()
+                            ),
+                            text = taskObj.optString
