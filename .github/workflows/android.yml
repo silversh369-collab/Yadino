@@ -29,6 +29,15 @@ jobs:
         with:
           gradle-version: "8.11.1"
 
+       
+      - name: Inspect AndroidManifest
+        run: |
+          echo "Manifest file:"
+          nl -ba app/src/main/AndroidManifest.xml
+          echo "Checking XML:"
+          python3 -c "import xml.etree.ElementTree as ET; ET.parse('app/src/main/AndroidManifest.xml'); print('XML is valid')"
+ 
+
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug --stacktrace --info
 
