@@ -49,6 +49,3 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-- name: ChatGPT GitHub Actions
-  uses: dlidstrom/genai-code-review@v3.0.8
-          
