@@ -1,4 +1,3 @@
-
 package com.yadino.app
 
 import android.Manifest
@@ -8,19 +7,20 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
-import android.widget.Toast
-import androidx.activity.ComponentActivity
-import androidx.activity.result.contract.ActivityResultContracts
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.view.Gravity
-import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import org.json.JSONArray
 import java.util.Locale
 
@@ -60,8 +60,11 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         registerForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { granted ->
-            if (granted) startSpeechRecognition()
-            else toast("برای ورودی صوتی اجازهٔ میکروفون لازم است.")
+            if (granted) {
+                startSpeechRecognition()
+            } else {
+                toast("برای ورودی صوتی اجازهٔ میکروفون لازم است.")
+            }
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -86,7 +89,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(22), dp(20), dp(12))
             setBackgroundColor(Color.rgb(245, 247, 252))
-            layoutDirection = LinearLayout.LayoutDirection.RTL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
 
         val title = TextView(this).apply {
@@ -144,6 +147,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
         addButton("🔊 خواندن متن با صدا") {
             val text = input.text.toString().trim()
+
             if (text.isNotEmpty()) {
                 if (ttsReady) {
                     tts.speak(
@@ -170,12 +174,14 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         root.addView(heading, matchWrap())
 
         val scroll = ScrollView(this)
+
         notesContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
+
         scroll.addView(
             notesContainer,
-            ScrollView.LayoutParams(
+            ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
@@ -201,7 +207,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             isAllCaps = false
             setTextColor(Color.WHITE)
             background = rounded(Color.rgb(66, 91, 190), 12)
-            setOnClickListener { action() }
+            setOnClickListener {
+                action()
+            }
         }
 
         val params = LinearLayout.LayoutParams(
@@ -210,6 +218,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         ).apply {
             topMargin = dp(9)
         }
+
         root.addView(button, params)
     }
 
@@ -230,8 +239,10 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private fun loadNotes() {
         val saved = prefs.getString("items", "[]") ?: "[]"
+
         try {
             val array = JSONArray(saved)
+
             for (i in 0 until array.length()) {
                 notes.add(array.getString(i))
             }
@@ -242,8 +253,14 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private fun persistNotes() {
         val array = JSONArray()
-        notes.forEach { array.put(it) }
-        prefs.edit().putString("items", array.toString()).apply()
+
+        notes.forEach { note ->
+            array.put(note)
+        }
+
+        prefs.edit()
+            .putString("items", array.toString())
+            .apply()
     }
 
     private fun renderNotes() {
@@ -259,6 +276,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 gravity = Gravity.CENTER
                 setPadding(0, dp(20), 0, dp(20))
             }
+
             notesContainer.addView(empty, matchWrap())
             return
         }
@@ -275,6 +293,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 textSize = 16f
                 setTextColor(Color.rgb(35, 40, 55))
             }
+
             card.addView(content, matchWrap())
 
             val actions = LinearLayout(this).apply {
@@ -285,6 +304,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             val readButton = Button(this).apply {
                 text = "🔊 خواندن"
                 isAllCaps = false
+
                 setOnClickListener {
                     if (ttsReady) {
                         tts.speak(
@@ -302,6 +322,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             val deleteButton = Button(this).apply {
                 text = "🗑 حذف"
                 isAllCaps = false
+
                 setOnClickListener {
                     notes.removeAt(index)
                     persistNotes()
@@ -319,18 +340,27 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             ).apply {
                 bottomMargin = dp(10)
             }
+
             notesContainer.addView(card, params)
         }
     }
 
     private fun startSpeechRecognition() {
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        val intent = Intent(
+            RecognizerIntent.ACTION_RECOGNIZE_SPEECH
+        ).apply {
             putExtra(
                 RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
             )
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "صحبت کن...")
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE,
+                "fa-IR"
+            )
+            putExtra(
+                RecognizerIntent.EXTRA_PROMPT,
+                "صحبت کن..."
+            )
         }
 
         try {
@@ -340,22 +370,35 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun rounded(color: Int, radius: Int) =
-        GradientDrawable().apply {
+    private fun rounded(
+        color: Int,
+        radius: Int
+    ): GradientDrawable {
+        return GradientDrawable().apply {
             setColor(color)
             cornerRadius = dp(radius).toFloat()
         }
+    }
 
-    private fun matchWrap() = LinearLayout.LayoutParams(
-        ViewGroup.LayoutParams.MATCH_PARENT,
-        ViewGroup.LayoutParams.WRAP_CONTENT
-    )
+    private fun matchWrap(): LinearLayout.LayoutParams {
+        return LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+    }
 
-    private fun dp(value: Int): Int =
-        (value * resources.displayMetrics.density).toInt()
+    private fun dp(value: Int): Int {
+        return (
+            value * resources.displayMetrics.density
+        ).toInt()
+    }
 
     private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        Toast.makeText(
+            this,
+            message,
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     override fun onDestroy() {
@@ -363,6 +406,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             tts.stop()
             tts.shutdown()
         }
+
         super.onDestroy()
     }
 }
