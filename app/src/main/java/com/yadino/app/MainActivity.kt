@@ -641,4 +641,56 @@ class MainActivity : AppCompatActivity() {
                                 "id",
                                 UUID.randomUUID().toString()
                             ),
-                            text = taskObj.optString
+                            text = taskObj.optString("text", ""),
+                            done = taskObj.optBoolean("done", false)
+                        )
+                    )
+                }
+
+                notes.add(note)
+            }
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "خواندن یادداشت‌ها با خطا روبه‌رو شد.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    private fun updateStatus() {
+        val allTasks = notes.flatMap { it.tasks }
+        val done = allTasks.count { it.done }
+
+        statusText.text =
+            "یادداشت‌ها: ${notes.size}  |  کارهای انجام‌شده: $done از ${allTasks.size}"
+    }
+
+    private fun editText(hintText: String): EditText {
+        return EditText(this).apply {
+            hint = hintText
+            textSize = 15f
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+        }
+    }
+
+    private fun button(label: String): Button {
+        return Button(this).apply {
+            text = label
+            isAllCaps = false
+        }
+    }
+
+    private fun matchWrap(): LinearLayout.LayoutParams {
+        return LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            bottomMargin = dp(5)
+        }
+    }
+
+    private fun dp(value: Int): Int {
+        return (value * resources.displayMetrics.density).toInt()
+    }
+}
