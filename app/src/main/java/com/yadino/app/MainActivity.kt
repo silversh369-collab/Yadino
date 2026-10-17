@@ -1,3 +1,4 @@
+
 package com.yadino.app
 
 import android.app.Activity
@@ -5,6 +6,7 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.os.Bundle
 import android.speech.RecognizerIntent
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -15,7 +17,6 @@ import androidx.security.crypto.MasterKey
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
-import java.util.Locale
 import java.util.UUID
 
 class MainActivity : AppCompatActivity() {
@@ -36,12 +37,7 @@ class MainActivity : AppCompatActivity() {
     )
 
     private val categories = listOf(
-        "عمومی",
-        "کار",
-        "شخصی",
-        "خرید",
-        "درس",
-        "ایده‌ها"
+        "عمومی", "کار", "شخصی", "خرید", "درس", "ایده‌ها"
     )
 
     private lateinit var prefs: android.content.SharedPreferences
@@ -57,6 +53,7 @@ class MainActivity : AppCompatActivity() {
     private var speechTarget: EditText? = null
 
     companion object {
+        private const val TAG = "YadinoStartup"
         private const val SPEECH_REQUEST = 401
         private const val DATA_KEY = "notes_json"
         private const val PIN_KEY = "pin_hash"
@@ -66,30 +63,61 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         try {
-            val masterKey = MasterKey.Builder(this)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
-
-            prefs = EncryptedSharedPreferences.create(
-                this,
-                "yadino_secure_storage",
-                masterKey,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
+            initializeSecureStorage()
+            loadNotes()
+            buildScreen()
+            renderNotes()
         } catch (e: Exception) {
-            Toast.makeText(
-                this,
-                "خطا در راه‌اندازی فضای امن: ${e.message}",
-                Toast.LENGTH_LONG
-            ).show()
-            finish()
-            return
+            Log.e(TAG, "Application startup failed", e)
+            showStartupError(e)
+        }
+    }
+
+    private fun initializeSecureStorage() {
+        val masterKey = MasterKey.Builder(this)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+
+        prefs = EncryptedSharedPreferences.create(
+            this,
+            "yadino_secure_storage",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    }
+
+    private fun showStartupError(error: Exception) {
+        val details = buildString {
+            appendLine("یادینو نتوانست راه‌اندازی شود.")
+            appendLine()
+            appendLine("نوع خطا:")
+            appendLine(error.javaClass.simpleName)
+            appendLine()
+            appendLine("شرح خطا:")
+            appendLine(error.localizedMessage ?: "توضیحی ارائه نشده است.")
+            appendLine()
+            append("گزارش خطا با برچسب YadinoStartup ثبت شده است.")
         }
 
-        loadNotes()
-        buildScreen()
-        renderNotes()
+        val message = TextView(this).apply {
+            text = details
+            textSize = 15f
+            setTextColor(0xFF202124.toInt())
+            setPadding(dp(20), dp(16), dp(20), dp(16))
+            textDirection = View.TEXT_DIRECTION_FIRST_STRONG
+        }
+
+        val scroll = ScrollView(this).apply {
+            addView(message)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("خطای راه‌اندازی یادینو")
+            .setView(scroll)
+            .setCancelable(false)
+            .setPositiveButton("بستن برنامه") { _, _ -> finish() }
+            .show()
     }
 
     private fun buildScreen() {
@@ -107,13 +135,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(0xFF263A73.toInt())
             setPadding(0, dp(8), 0, dp(4))
         }
-        root.addView(
-            header,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
+        root.addView(header, matchWrap())
 
         val subtitle = TextView(this).apply {
             text = "یادداشت‌ها و کارهایت را مرتب کن"
@@ -122,7 +144,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(0xFF606A7B.toInt())
             setPadding(0, 0, 0, dp(12))
         }
-        root.addView(subtitle)
+        root.addView(subtitle, matchWrap())
 
         titleInput = editText("عنوان یادداشت")
         root.addView(titleInput, matchWrap())
@@ -163,7 +185,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(0xFF263A73.toInt())
             setPadding(0, dp(8), 0, dp(4))
         }
-        root.addView(taskTitle)
+        root.addView(taskTitle, matchWrap())
 
         taskInput = editText("کار جدید؛ مثلاً خرید نان")
         root.addView(taskInput, matchWrap())
@@ -198,7 +220,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(0xFF475569.toInt())
             setPadding(0, dp(8), 0, dp(8))
         }
-        root.addView(statusText)
+        root.addView(statusText, matchWrap())
 
         val savedTitle = TextView(this).apply {
             text = "یادداشت‌های ذخیره‌شده"
@@ -206,13 +228,14 @@ class MainActivity : AppCompatActivity() {
             setTextColor(0xFF263A73.toInt())
             setPadding(0, dp(12), 0, dp(8))
         }
-        root.addView(savedTitle)
+        root.addView(savedTitle, matchWrap())
 
         val scroll = ScrollView(this)
         notesContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
         scroll.addView(notesContainer)
+
         root.addView(
             scroll,
             LinearLayout.LayoutParams(
@@ -258,10 +281,8 @@ class MainActivity : AppCompatActivity() {
         isPrivate: Boolean,
         taskText: String
     ) {
-        val finalTitle = title.ifBlank { "یادداشت بدون عنوان" }
-
         val note = Note(
-            title = finalTitle,
+            title = title.ifBlank { "یادداشت بدون عنوان" },
             body = body,
             category = category,
             isPrivate = isPrivate
@@ -327,15 +348,12 @@ class MainActivity : AppCompatActivity() {
             val cardParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            cardParams.setMargins(0, 0, 0, dp(10))
+            ).apply {
+                bottomMargin = dp(10)
+            }
 
             val heading = TextView(this).apply {
-                text = if (note.isPrivate) {
-                    "🔒 ${note.title}"
-                } else {
-                    note.title
-                }
+                text = if (note.isPrivate) "🔒 ${note.title}" else note.title
                 textSize = 19f
                 setTextColor(0xFF263A73.toInt())
             }
@@ -359,9 +377,7 @@ class MainActivity : AppCompatActivity() {
 
                 val unlockButton = button("🔓 باز کردن یادداشت")
                 unlockButton.setOnClickListener {
-                    showVerifyPinDialog {
-                        showPrivateNote(note)
-                    }
+                    showVerifyPinDialog { showPrivateNote(note) }
                 }
                 card.addView(unlockButton)
             } else {
@@ -369,9 +385,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             val deleteButton = button("حذف یادداشت")
-            deleteButton.setOnClickListener {
-                confirmDelete(note)
-            }
+            deleteButton.setOnClickListener { confirmDelete(note) }
             card.addView(deleteButton)
 
             notesContainer.addView(card, cardParams)
@@ -405,7 +419,6 @@ class MainActivity : AppCompatActivity() {
             textSize = 16f
         }
         container.addView(body)
-
         renderTasks(container, note)
 
         AlertDialog.Builder(this)
@@ -418,9 +431,8 @@ class MainActivity : AppCompatActivity() {
     private fun renderTasks(container: LinearLayout, note: Note) {
         if (note.tasks.isEmpty()) return
 
-        val completed = note.tasks.count { it.done }
         val progress = TextView(this).apply {
-            text = "پیشرفت: $completed از ${note.tasks.size} کار انجام شده"
+            text = "پیشرفت: ${note.tasks.count { it.done }} از ${note.tasks.size} کار انجام شده"
             textSize = 14f
             setTextColor(0xFF25634A.toInt())
             setPadding(0, dp(4), 0, dp(4))
@@ -511,11 +523,7 @@ class MainActivity : AppCompatActivity() {
                 if (savedHash != null && savedHash == hashPin(pinInput.text.toString())) {
                     onSuccess()
                 } else {
-                    Toast.makeText(
-                        this,
-                        "رمز اشتباه است",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    Toast.makeText(this, "رمز اشتباه است", Toast.LENGTH_SHORT).show()
                 }
             }
             .show()
@@ -524,7 +532,6 @@ class MainActivity : AppCompatActivity() {
     private fun hashPin(pin: String): String {
         val bytes = MessageDigest.getInstance("SHA-256")
             .digest(pin.toByteArray(Charsets.UTF_8))
-
         return bytes.joinToString("") { "%02x".format(it) }
     }
 
@@ -543,6 +550,7 @@ class MainActivity : AppCompatActivity() {
             @Suppress("DEPRECATION")
             startActivityForResult(intent, SPEECH_REQUEST)
         } catch (e: Exception) {
+            Log.e(TAG, "Speech recognition could not start", e)
             Toast.makeText(
                 this,
                 "تشخیص گفتار در این گوشی در دسترس نیست.",
@@ -560,10 +568,11 @@ class MainActivity : AppCompatActivity() {
         super.onActivityResult(requestCode, resultCode, data)
 
         if (requestCode == SPEECH_REQUEST && resultCode == Activity.RESULT_OK) {
-            val results = data?.getStringArrayListExtra(
-                RecognizerIntent.EXTRA_RESULTS
-            )
-            val spoken = results?.firstOrNull()?.trim().orEmpty()
+            val spoken = data
+                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+                ?.trim()
+                .orEmpty()
 
             if (spoken.isNotBlank()) {
                 val target = speechTarget ?: bodyInput
@@ -615,7 +624,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadNotes() {
         notes.clear()
-
         val raw = prefs.getString(DATA_KEY, null) ?: return
 
         try {
@@ -637,10 +645,7 @@ class MainActivity : AppCompatActivity() {
                     val taskObj = taskArray.getJSONObject(j)
                     note.tasks.add(
                         Task(
-                            id = taskObj.optString(
-                                "id",
-                                UUID.randomUUID().toString()
-                            ),
+                            id = taskObj.optString("id", UUID.randomUUID().toString()),
                             text = taskObj.optString("text", ""),
                             done = taskObj.optBoolean("done", false)
                         )
@@ -650,6 +655,7 @@ class MainActivity : AppCompatActivity() {
                 notes.add(note)
             }
         } catch (e: Exception) {
+            Log.e(TAG, "Could not read saved notes", e)
             Toast.makeText(
                 this,
                 "خواندن یادداشت‌ها با خطا روبه‌رو شد.",
@@ -660,10 +666,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateStatus() {
         val allTasks = notes.flatMap { it.tasks }
-        val done = allTasks.count { it.done }
-
         statusText.text =
-            "یادداشت‌ها: ${notes.size}  |  کارهای انجام‌شده: $done از ${allTasks.size}"
+            "یادداشت‌ها: ${notes.size}  |  کارهای انجام‌شده: ${allTasks.count { it.done }} از ${allTasks.size}"
     }
 
     private fun editText(hintText: String): EditText {
