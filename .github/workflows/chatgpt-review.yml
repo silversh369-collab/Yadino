@@ -1,0 +1,2 @@
+- name: ChatGPT GitHub Actions
+  uses: dlidstrom/genai-code-review@v3.0.8
