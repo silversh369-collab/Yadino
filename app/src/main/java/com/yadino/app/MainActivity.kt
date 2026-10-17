@@ -46,7 +46,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var privateCheck: CheckBox
     private lateinit var notesContainer: LinearLayout
     private lateinit var statusText: TextView
-    private var mainScroll: ScrollView? = null
 
     private val notes = mutableListOf<Note>()
     private var speechTarget: EditText? = null
@@ -108,7 +107,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         val scroll = ScrollView(this).apply {
-            addView(message)
+            addView(
+                message,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
         }
 
         AlertDialog.Builder(this)
@@ -235,21 +240,22 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(notesContainer, matchWrap())
 
-        // تمام صفحه داخل یک اسکرول قرار می‌گیرد.
-        mainScroll = ScrollView(this).apply {
+        // کل صفحه، شامل یادداشت‌های ذخیره‌شده، قابل پیمایش است.
+        val scroll = ScrollView(this).apply {
             isFillViewport = true
             isVerticalScrollBarEnabled = true
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+
             addView(
                 root,
-                ScrollView.LayoutParams(
+                ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 )
             )
         }
 
-        setContentView(mainScroll)
+        setContentView(scroll)
         updateStatus()
     }
 
@@ -429,9 +435,19 @@ class MainActivity : AppCompatActivity() {
         container.addView(body)
         renderTasks(container, note)
 
+        val scroll = ScrollView(this).apply {
+            addView(
+                container,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
+
         AlertDialog.Builder(this)
             .setTitle("🔒 ${note.title}")
-            .setView(container)
+            .setView(scroll)
             .setPositiveButton("بستن", null)
             .show()
     }
@@ -532,7 +548,8 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("لغو", null)
             .setPositiveButton("تأیید") { _, _ ->
                 val savedHash = prefs.getString(PIN_KEY, null)
-                if (savedHash != null &&
+                if (
+                    savedHash != null &&
                     savedHash == hashPin(pinInput.text.toString())
                 ) {
                     onSuccess()
