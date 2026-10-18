@@ -1,3 +1,4 @@
+
 package com.yadino.app
 
 import android.app.Activity
@@ -48,6 +49,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
 
     private val notes = mutableListOf<Note>()
+
+    // شناسه یادداشتی که در حال ویرایش آن هستیم
+    private var editingNoteId: String? = null
+
     private var speechTarget: EditText? = null
 
     companion object {
@@ -202,8 +207,21 @@ class MainActivity : AppCompatActivity() {
         root.addView(taskVoiceButton, matchWrap())
 
         val saveButton = button("＋ ذخیره یادداشت")
-        saveButton.setOnClickListener { saveCurrentNote() }
+        saveButton.setOnClickListener {
+            saveCurrentNote()
+        }
         root.addView(saveButton, matchWrap())
+
+        val cancelEditButton = button("لغو ویرایش")
+        cancelEditButton.setOnClickListener {
+            clearNoteForm()
+            Toast.makeText(
+                this,
+                "ویرایش لغو شد",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+        root.addView(cancelEditButton, matchWrap())
 
         val aiButton = button("✨ دستیار هوشمند آنلاین")
         aiButton.setOnClickListener {
@@ -240,7 +258,6 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(notesContainer, matchWrap())
 
-        // کل صفحه، شامل یادداشت‌های ذخیره‌شده، قابل پیمایش است.
         val scroll = ScrollView(this).apply {
             isFillViewport = true
             isVerticalScrollBarEnabled = true
@@ -263,7 +280,8 @@ class MainActivity : AppCompatActivity() {
         val title = titleInput.text.toString().trim()
         val body = bodyInput.text.toString().trim()
         val taskText = taskInput.text.toString().trim()
-        val category = categorySpinner.selectedItem?.toString() ?: "عمومی"
+        val category =
+            categorySpinner.selectedItem?.toString() ?: "عمومی"
         val isPrivate = privateCheck.isChecked
 
         if (title.isBlank() && body.isBlank() && taskText.isBlank()) {
@@ -275,12 +293,38 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        if (isPrivate && prefs.getString(PIN_KEY, null) == null) {
+        val saveAction: () -> Unit = {
+            val noteId = editingNoteId
+
+            if (noteId != null) {
+                updateExistingNote(
+                    noteId,
+                    title,
+                    body,
+                    category,
+                    isPrivate,
+                    taskText
+                )
+            } else {
+                createNote(
+                    title,
+                    body,
+                    category,
+                    isPrivate,
+                    taskText
+                )
+            }
+        }
+
+        if (
+            isPrivate &&
+            prefs.getString(PIN_KEY, null) == null
+        ) {
             showSetPinDialog {
-                createNote(title, body, category, isPrivate, taskText)
+                saveAction()
             }
         } else {
-            createNote(title, body, category, isPrivate, taskText)
+            saveAction()
         }
     }
 
@@ -307,18 +351,108 @@ class MainActivity : AppCompatActivity() {
         notes.add(0, note)
         saveNotes()
         renderNotes()
-
-        titleInput.text.clear()
-        bodyInput.text.clear()
-        taskInput.text.clear()
-        privateCheck.isChecked = false
-        categorySpinner.setSelection(0)
+        clearNoteForm()
 
         Toast.makeText(
             this,
             "یادداشت ذخیره شد ❤️",
             Toast.LENGTH_SHORT
         ).show()
+    }
+
+    // بارگذاری اطلاعات یادداشت در فرم ویرایش
+    private fun editNote(note: Note) {
+        editingNoteId = note.id
+
+        titleInput.setText(note.title)
+        bodyInput.setText(note.body)
+
+        taskInput.setText(
+            note.tasks.joinToString("\n") { it.text }
+        )
+
+        val categoryIndex = categories.indexOf(note.category)
+        categorySpinner.setSelection(
+            if (categoryIndex >= 0) categoryIndex else 0
+        )
+
+        privateCheck.isChecked = note.isPrivate
+
+        titleInput.requestFocus()
+
+        Toast.makeText(
+            this,
+            "یادداشت را ویرایش کن و ذخیره را بزن",
+            Toast.LENGTH_LONG
+        ).show()
+    }
+
+    // به‌روزرسانی همان یادداشت، بدون ساختن یادداشت تکراری
+    private fun updateExistingNote(
+        noteId: String,
+        title: String,
+        body: String,
+        category: String,
+        isPrivate: Boolean,
+        taskText: String
+    ) {
+        val note = notes.find { it.id == noteId }
+
+        if (note == null) {
+            editingNoteId = null
+
+            Toast.makeText(
+                this,
+                "یادداشت پیدا نشد؛ دوباره تلاش کن",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        // حفظ شناسه و وضعیت کارهایی که متنشان تغییر نکرده است
+        val remainingTasks = note.tasks.toMutableList()
+
+        val updatedTasks = splitTasks(taskText).map { taskName ->
+            val existing = remainingTasks.firstOrNull {
+                it.text == taskName
+            }
+
+            if (existing != null) {
+                remainingTasks.remove(existing)
+                existing
+            } else {
+                Task(text = taskName)
+            }
+        }
+
+        note.title = title.ifBlank { "یادداشت بدون عنوان" }
+        note.body = body
+        note.category = category
+        note.isPrivate = isPrivate
+
+        note.tasks.clear()
+        note.tasks.addAll(updatedTasks)
+
+        editingNoteId = null
+
+        saveNotes()
+        renderNotes()
+        clearNoteForm()
+
+        Toast.makeText(
+            this,
+            "تغییرات یادداشت ذخیره شد ❤️",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun clearNoteForm() {
+        titleInput.text.clear()
+        bodyInput.text.clear()
+        taskInput.text.clear()
+        privateCheck.isChecked = false
+        categorySpinner.setSelection(0)
+        editingNoteId = null
     }
 
     private fun splitTasks(text: String): List<String> {
@@ -367,7 +501,11 @@ class MainActivity : AppCompatActivity() {
             }
 
             val heading = TextView(this).apply {
-                text = if (note.isPrivate) "🔒 ${note.title}" else note.title
+                text = if (note.isPrivate) {
+                    "🔒 ${note.title}"
+                } else {
+                    note.title
+                }
                 textSize = 19f
                 setTextColor(0xFF263A73.toInt())
             }
@@ -391,15 +529,31 @@ class MainActivity : AppCompatActivity() {
 
                 val unlockButton = button("🔓 باز کردن یادداشت")
                 unlockButton.setOnClickListener {
-                    showVerifyPinDialog { showPrivateNote(note) }
+                    showVerifyPinDialog {
+                        showPrivateNote(note)
+                    }
                 }
                 card.addView(unlockButton)
             } else {
                 showNoteContent(card, note)
             }
 
+            val editButton = button("✏️ ویرایش یادداشت")
+            editButton.setOnClickListener {
+                if (note.isPrivate) {
+                    showVerifyPinDialog {
+                        editNote(note)
+                    }
+                } else {
+                    editNote(note)
+                }
+            }
+            card.addView(editButton)
+
             val deleteButton = button("حذف یادداشت")
-            deleteButton.setOnClickListener { confirmDelete(note) }
+            deleteButton.setOnClickListener {
+                confirmDelete(note)
+            }
             card.addView(deleteButton)
 
             notesContainer.addView(card, cardParams)
@@ -425,6 +579,7 @@ class MainActivity : AppCompatActivity() {
     private fun showPrivateNote(note: Note) {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
             setPadding(dp(8), dp(8), dp(8), dp(8))
         }
 
@@ -456,7 +611,8 @@ class MainActivity : AppCompatActivity() {
         if (note.tasks.isEmpty()) return
 
         val progress = TextView(this).apply {
-            text = "پیشرفت: ${note.tasks.count { it.done }} از ${note.tasks.size} کار انجام شده"
+            text =
+                "پیشرفت: ${note.tasks.count { it.done }} از ${note.tasks.size} کار انجام شده"
             textSize = 14f
             setTextColor(0xFF25634A.toInt())
             setPadding(0, dp(4), 0, dp(4))
@@ -481,8 +637,14 @@ class MainActivity : AppCompatActivity() {
     private fun confirmDelete(note: Note) {
         val action = {
             notes.removeAll { it.id == note.id }
+
+            if (editingNoteId == note.id) {
+                clearNoteForm()
+            }
+
             saveNotes()
             renderNotes()
+
             Toast.makeText(
                 this,
                 "یادداشت حذف شد",
@@ -490,22 +652,21 @@ class MainActivity : AppCompatActivity() {
             ).show()
         }
 
-        if (note.isPrivate) {
-            showVerifyPinDialog {
-                AlertDialog.Builder(this)
-                    .setTitle("حذف یادداشت")
-                    .setMessage("این یادداشت برای همیشه حذف شود؟")
-                    .setNegativeButton("لغو", null)
-                    .setPositiveButton("حذف") { _, _ -> action() }
-                    .show()
-            }
-        } else {
+        val confirmAction = {
             AlertDialog.Builder(this)
                 .setTitle("حذف یادداشت")
                 .setMessage("این یادداشت برای همیشه حذف شود؟")
                 .setNegativeButton("لغو", null)
                 .setPositiveButton("حذف") { _, _ -> action() }
                 .show()
+        }
+
+        if (note.isPrivate) {
+            showVerifyPinDialog {
+                confirmAction()
+            }
+        } else {
+            confirmAction()
         }
     }
 
@@ -517,11 +678,14 @@ class MainActivity : AppCompatActivity() {
 
         AlertDialog.Builder(this)
             .setTitle("ساخت رمز یادداشت خصوصی")
-            .setMessage("این رمز برای باز کردن یادداشت‌های خصوصی استفاده می‌شود.")
+            .setMessage(
+                "این رمز برای باز کردن یادداشت‌های خصوصی استفاده می‌شود."
+            )
             .setView(pinInput)
             .setNegativeButton("لغو", null)
             .setPositiveButton("ذخیره رمز") { _, _ ->
                 val pin = pinInput.text.toString()
+
                 if (pin.length < 4 || pin.any { !it.isDigit() }) {
                     Toast.makeText(
                         this,
@@ -529,7 +693,10 @@ class MainActivity : AppCompatActivity() {
                         Toast.LENGTH_LONG
                     ).show()
                 } else {
-                    prefs.edit().putString(PIN_KEY, hashPin(pin)).apply()
+                    prefs.edit()
+                        .putString(PIN_KEY, hashPin(pin))
+                        .apply()
+
                     onSuccess()
                 }
             }
@@ -548,6 +715,7 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("لغو", null)
             .setPositiveButton("تأیید") { _, _ ->
                 val savedHash = prefs.getString(PIN_KEY, null)
+
                 if (
                     savedHash != null &&
                     savedHash == hashPin(pinInput.text.toString())
@@ -567,18 +735,24 @@ class MainActivity : AppCompatActivity() {
     private fun hashPin(pin: String): String {
         val bytes = MessageDigest.getInstance("SHA-256")
             .digest(pin.toByteArray(Charsets.UTF_8))
+
         return bytes.joinToString("") { "%02x".format(it) }
     }
 
     private fun startSpeechRecognition() {
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        val intent = Intent(
+            RecognizerIntent.ACTION_RECOGNIZE_SPEECH
+        ).apply {
             putExtra(
                 RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
             )
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "fa-IR")
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "فارسی صحبت کن...")
+            putExtra(
+                RecognizerIntent.EXTRA_PROMPT,
+                "فارسی صحبت کن..."
+            )
         }
 
         try {
@@ -586,6 +760,7 @@ class MainActivity : AppCompatActivity() {
             startActivityForResult(intent, SPEECH_REQUEST)
         } catch (e: Exception) {
             Log.e(TAG, "Speech recognition could not start", e)
+
             Toast.makeText(
                 this,
                 "تشخیص گفتار در این گوشی در دسترس نیست.",
@@ -602,9 +777,14 @@ class MainActivity : AppCompatActivity() {
     ) {
         super.onActivityResult(requestCode, resultCode, data)
 
-        if (requestCode == SPEECH_REQUEST && resultCode == Activity.RESULT_OK) {
+        if (
+            requestCode == SPEECH_REQUEST &&
+            resultCode == Activity.RESULT_OK
+        ) {
             val spoken = data
-                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.getStringArrayListExtra(
+                    RecognizerIntent.EXTRA_RESULTS
+                )
                 ?.firstOrNull()
                 ?.trim()
                 .orEmpty()
@@ -614,13 +794,25 @@ class MainActivity : AppCompatActivity() {
                 val existing = target.text.toString()
 
                 val processed = spoken
-                    .replace("برو سر خط بعدی", "\n", ignoreCase = true)
-                    .replace("خط بعدی", "\n", ignoreCase = true)
+                    .replace(
+                        "برو سر خط بعدی",
+                        "\n",
+                        ignoreCase = true
+                    )
+                    .replace(
+                        "خط بعدی",
+                        "\n",
+                        ignoreCase = true
+                    )
 
                 target.setText(
-                    if (existing.isBlank()) processed
-                    else "$existing\n$processed"
+                    if (existing.isBlank()) {
+                        processed
+                    } else {
+                        "$existing\n$processed"
+                    }
                 )
+
                 target.setSelection(target.text.length)
             }
         }
@@ -654,11 +846,14 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        prefs.edit().putString(DATA_KEY, array.toString()).apply()
+        prefs.edit()
+            .putString(DATA_KEY, array.toString())
+            .apply()
     }
 
     private fun loadNotes() {
         notes.clear()
+
         val raw = prefs.getString(DATA_KEY, null) ?: return
 
         try {
@@ -666,18 +861,24 @@ class MainActivity : AppCompatActivity() {
 
             for (i in 0 until array.length()) {
                 val obj = array.getJSONObject(i)
+
                 val note = Note(
-                    id = obj.optString("id", UUID.randomUUID().toString()),
+                    id = obj.optString(
+                        "id",
+                        UUID.randomUUID().toString()
+                    ),
                     title = obj.optString("title", "یادداشت"),
                     body = obj.optString("body", ""),
                     category = obj.optString("category", "عمومی"),
                     isPrivate = obj.optBoolean("private", false)
                 )
 
-                val taskArray = obj.optJSONArray("tasks") ?: JSONArray()
+                val taskArray =
+                    obj.optJSONArray("tasks") ?: JSONArray()
 
                 for (j in 0 until taskArray.length()) {
                     val taskObj = taskArray.getJSONObject(j)
+
                     note.tasks.add(
                         Task(
                             id = taskObj.optString(
@@ -694,6 +895,7 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Could not read saved notes", e)
+
             Toast.makeText(
                 this,
                 "خواندن یادداشت‌ها با خطا روبه‌رو شد.",
@@ -704,6 +906,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateStatus() {
         val allTasks = notes.flatMap { it.tasks }
+
         statusText.text =
             "یادداشت‌ها: ${notes.size}  |  کارهای انجام‌شده: " +
                 "${allTasks.count { it.done }} از ${allTasks.size}"
