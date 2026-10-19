@@ -1,0 +1,61 @@
+name: AI Review + Human-Approved Fix
+
+on:
+  pull_request:
+    branches: [ "main" ]
+
+# دسترسی‌های لازم: خواندن کد و نوشتن تغییرات
+permissions:
+  contents: write        # برای کامیت کردن اصلاحات
+  pull-requests: write   # برای کامنت گذاشتن روی PR
+  models: read           # برای دسترسی به GitHub Models (رایگان)
+
+jobs:
+  # ==========================================
+  # مرحله ۱: بررسی کد توسط هوش مصنوعی (رایگان)
+  # ==========================================
+  ai-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # این اکشن رایگان، کدها را بررسی و کامنت می‌گذارد
+      - name: Run AI Code Reviewer (Free with GitHub Models)
+        uses: iamvinbas/ai-code-reviewer@main
+        # نیازی به هیچ API Key یا Secret نیست!
+        # فقط GITHUB_TOKEN نیاز است که خودکار است.
+
+  # ==========================================
+  # مرحله ۲: درخواست تأیید دستی از تو
+  # ==========================================
+  manual-approval:
+    runs-on: ubuntu-latest
+    needs: ai-review   # بعد از بررسی اجرا می‌شود
+    environment: manual-approval   # به محیطی که ساختیم وصل است
+    steps:
+      - name: Wait for Human Approval
+        run: echo "✅ تأیید دستی دریافت شد. حالا می‌توان تغییرات را اعمال کرد."
+
+  # ==========================================
+  # مرحله ۳: اعمال اصلاحات (بعد از تأیید تو)
+  # ==========================================
+  apply-fixes:
+    runs-on: ubuntu-latest
+    needs: manual-approval   # فقط بعد از تأیید تو اجرا می‌شود
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # در اینجا می‌توانی اسکریپت اصلاح‌کننده خودت را اجرا کنی
+      # یا از یک اکشن آماده برای اعمال تغییرات استفاده کنی
+      - name: Apply AI Fixes
+        run: |
+          echo "🤖 در حال اعمال اصلاحات پیشنهادی هوش مصنوعی..."
+          # (اینجا کدهای اصلاح‌کننده قرار می‌گیرد)
+          git status
