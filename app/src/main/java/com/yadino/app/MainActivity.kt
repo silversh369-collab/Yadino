@@ -25,7 +25,6 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
 import android.view.Gravity
-import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
@@ -108,7 +107,6 @@ class MainActivity : AppCompatActivity() {
     private var selectedRepeatInterval = 60
     private var selectedRingtoneUri = ""
 
-    // بخش میکروفون (ضد کرش)
     private var speechRecognizer: SpeechRecognizer? = null
     private var continuousSpeech = false
     private var speechTarget: EditText? = null
@@ -173,7 +171,7 @@ class MainActivity : AppCompatActivity() {
         mainScroll = ScrollView(this)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 24, 24, 200) // فاصله زیاد از پایین برای اینکه FAB روی محتوا نیفته
+            setPadding(24, 24, 24, 200)
         }
 
         content.addView(TextView(this).apply {
@@ -233,11 +231,10 @@ class MainActivity : AppCompatActivity() {
         }
         content.addView(filterSpinner, matchWidth())
 
-        // 🔧 استفاده از RecyclerView به جای GridLayout
         notesRecyclerView = RecyclerView(this).apply {
             layoutManager = GridLayoutManager(this@MainActivity, 2)
             setHasFixedSize(false)
-            isNestedScrollingEnabled = false // برای اینکه داخل ScrollView درست اسکرول بشه
+            isNestedScrollingEnabled = false
         }
         noteAdapter = NoteAdapter(notes, 
             onClick = { note ->
@@ -280,7 +277,7 @@ class MainActivity : AppCompatActivity() {
         noteAdapter.updateData(visibleNotes)
     }
 
-    // کلاس آداپتر برای RecyclerView
+    // 🔧 آداپتر اصلاح‌شده برای RecyclerView (رفع ارور columnSpec)
     inner class NoteAdapter(
         private var items: List<Note>,
         private val onClick: (Note) -> Unit,
@@ -299,9 +296,12 @@ class MainActivity : AppCompatActivity() {
             val card = LinearLayout(parent.context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(30, 30, 30, 30)
-                layoutParams = RecyclerView.LayoutParams(0, RecyclerView.LayoutParams.WRAP_CONTENT).apply {
-                    columnSpec = GridLayoutManager.LayoutParams(GridLayoutManager.LayoutParams.WRAP_CONTENT, GridLayoutManager.LayoutParams.WRAP_CONTENT)
-                    marginEnd = 10
+                // استفاده از LayoutParams استاندارد RecyclerView
+                layoutParams = RecyclerView.LayoutParams(
+                    RecyclerView.LayoutParams.MATCH_PARENT,
+                    RecyclerView.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    marginEnd = 15
                     bottomMargin = 20
                 }
                 background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 30f; setColor(Color.GRAY) }
@@ -321,11 +321,6 @@ class MainActivity : AppCompatActivity() {
             val textColor = if (isColorDark(cardColor)) Color.WHITE else Color.BLACK
 
             (holder.card.background as android.graphics.drawable.GradientDrawable).setColor(cardColor)
-            
-            // تنظیم دقیق عرض کارت‌ها برای گرید دو ستونه
-            val params = holder.card.layoutParams as GridLayoutManager.LayoutParams
-            params.width = (notesRecyclerView.width / 2) - 30
-            holder.card.layoutParams = params
 
             holder.title.setTextColor(textColor)
             holder.title.text = if (note.isPrivate) "🔒 ${note.title}" else note.title
@@ -350,8 +345,8 @@ class MainActivity : AppCompatActivity() {
                         setTextColor(textColor)
                         setOnCheckedChangeListener { _, checked ->
                             task.done = checked
-                            updateProgressUI() // آپدیت آنی تیک
-                            onTaskToggle() // ذخیره در پس‌زمینه
+                            updateProgressUI()
+                            onTaskToggle()
                         }
                     }
                     holder.tasksLayout.addView(cb)
@@ -372,9 +367,6 @@ class MainActivity : AppCompatActivity() {
         return darkness >= 0.5
     }
 
-    // ===================================================================
-    // بخش میکروفون (رفع کامل کرش)
-    // ===================================================================
     private fun toggleVoiceInput(offline: Boolean) {
         if (continuousSpeech) {
             stopContinuousSpeech()
@@ -437,7 +429,6 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
-                // 🔧 ری‌استارت ایمن با Handler
                 if (continuousSpeech) {
                     handler.removeCallbacks(restartRunnable)
                     handler.postDelayed(restartRunnable, 800)
@@ -470,7 +461,6 @@ class MainActivity : AppCompatActivity() {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            // تنظیمات حساسیت میکروفون (کاهش قطع شدن جمله)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000L)
@@ -488,9 +478,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() { stopContinuousSpeech(); super.onDestroy() }
 
-    // ===================================================================
-    // بخش‌های ذخیره و یادآور (بدون تغییر)
-    // ===================================================================
     private fun saveCurrentNote() {
         val title = titleInput.text.toString().trim(); val body = bodyInput.text.toString().trim()
         if (title.isBlank() && body.isBlank()) { Toast.makeText(this, "عنوان یا متن خالی است", Toast.LENGTH_SHORT).show(); return }
