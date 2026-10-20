@@ -3,6 +3,11 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+dependencies {
+    // ... بقیه خطوط
+    implementation("androidx.core:core-splashscreen:1.0.1")
+}
+
 val releaseStoreFile = System.getenv("KEYSTORE_FILE")
 val releaseStorePassword = System.getenv("KEYSTORE_PASSWORD")
 val releaseKeyAlias = System.getenv("KEY_ALIAS")
