@@ -33,6 +33,8 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.AlphaAnimation
+import android.view.animation.Animation
 import android.view.animation.DecelerateInterpolator
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
@@ -114,6 +116,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var formContainer: LinearLayout
     private lateinit var mainScroll: ScrollView
     private lateinit var securePrefs: android.content.SharedPreferences
+
+    // ویوهای میکروفون
+    private lateinit var micStatusText: TextView
+    private lateinit var micButton: Button
+    private var blinkAnimation: AlphaAnimation? = null
 
     private var editingNoteId: String? = null
     private var selectedReminderAt: Long = 0L
@@ -216,48 +223,29 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
         }
 
-        // ===================================================================
         // 🔧 قاب طلای واقعی (Multi-layer Gradient)
-        // ===================================================================
         fun styleInput(editText: EditText) {
             editText.setTextColor(Color.parseColor(COLOR_TEXT_PRIMARY))
             editText.setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
 
             val density = resources.displayMetrics.density
-            val normalInset = (2 * density).toInt()  // ضخامت قاب در حالت عادی
-            val focusedInset = (4 * density).toInt() // ضخامت قاب در حالت کلیک شده
+            val normalInset = (2 * density).toInt()
+            val focusedInset = (4 * density).toInt()
 
-            // 1. قاب طلایی حالت عادی (طیف ملایم)
             val normalGold = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
                 intArrayOf(Color.parseColor("#AA8B2B"), Color.parseColor("#D4AF37"), Color.parseColor("#AA8B2B"))
             ).apply { cornerRadius = 40f }
+            val normalInner = GradientDrawable().apply { setColor(Color.parseColor(COLOR_CARD)); cornerRadius = 38f }
+            val normalLayer = LayerDrawable(arrayOf(normalGold, normalInner)).apply { setLayerInset(1, normalInset, normalInset, normalInset, normalInset) }
 
-            val normalInner = GradientDrawable().apply {
-                setColor(Color.parseColor(COLOR_CARD))
-                cornerRadius = 38f
-            }
-
-            val normalLayer = LayerDrawable(arrayOf(normalGold, normalInner)).apply {
-                setLayerInset(1, normalInset, normalInset, normalInset, normalInset)
-            }
-
-            // 2. قاب طلایی حالت کلیک شده (ضخیم‌تر، درخشان‌تر و پس‌زمینه کمی روشن‌تر)
             val focusedGold = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
                 intArrayOf(Color.parseColor("#F3E5AB"), Color.parseColor("#D4AF37"), Color.parseColor("#AA8B2B"), Color.parseColor("#F3E5AB"))
             ).apply { cornerRadius = 40f }
+            val focusedInner = GradientDrawable().apply { setColor(Color.parseColor("#202020")); cornerRadius = 36f }
+            val focusedLayer = LayerDrawable(arrayOf(focusedGold, focusedInner)).apply { setLayerInset(1, focusedInset, focusedInset, focusedInset, focusedInset) }
 
-            val focusedInner = GradientDrawable().apply {
-                setColor(Color.parseColor("#202020"))
-                cornerRadius = 36f
-            }
-
-            val focusedLayer = LayerDrawable(arrayOf(focusedGold, focusedInner)).apply {
-                setLayerInset(1, focusedInset, focusedInset, focusedInset, focusedInset)
-            }
-
-            // افکت موج
             val rippleColor = ColorStateList.valueOf(Color.parseColor("#33D4AF37"))
             val normalRipple = RippleDrawable(rippleColor, normalLayer, null)
             val focusedRipple = RippleDrawable(rippleColor, focusedLayer, null)
@@ -268,10 +256,9 @@ class MainActivity : AppCompatActivity() {
             }
 
             editText.background = states
-            editText.setPadding(45, 40, 45, 40) // پدینگ بیشتر برای اینکه متن با قاب طلایی تداخل نداشته باشه
+            editText.setPadding(45, 40, 45, 40)
             editText.textSize = 16f
         }
-        // ===================================================================
 
         titleInput = EditText(this).apply { hint = "عنوان یادداشت" }
         styleInput(titleInput)
@@ -323,7 +310,20 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        formContainer.addView(createGoldButton("🎤 شروع ضبط صدا") { toggleVoiceInput(false) }, matchWidth())
+        // 🔧 دکمه میکروفون با متن وضعیت زیرش
+        micButton = createGoldButton("🎤 شروع ضبط صدا") { toggleVoiceInput(false) }
+        formContainer.addView(micButton, matchWidth())
+
+        micStatusText = TextView(this).apply {
+            text = ""
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor(COLOR_GOLD))
+            setPadding(0, 10, 0, 20)
+            visibility = View.GONE
+        }
+        formContainer.addView(micStatusText, matchWidth())
+
         formContainer.addView(createGoldButton("تنظیم یادآور") { configureReminder() }, matchWidth())
 
         reminderSummary = TextView(this).apply { 
@@ -522,12 +522,34 @@ class MainActivity : AppCompatActivity() {
         override fun getItemCount() = items.size
     }
 
+    // ===================================================================
+    // 🎤 سیستم ضبط صدا هوشمند (دقیقاً مثل Gboard)
+    // ===================================================================
     private fun toggleVoiceInput(offline: Boolean) {
-        if (continuousSpeech) stopContinuousSpeech()
-        else {
+        if (continuousSpeech) {
+            stopContinuousSpeech()
+            micStatusText.visibility = View.GONE
+            micButton.text = "🎤 شروع ضبط صدا"
+        } else {
             isOfflineMode = offline
             startVoiceInput()
+            micStatusText.visibility = View.VISIBLE
+            micStatusText.text = "صحبت کنید..."
+            micStatusText.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+            micButton.text = "🛑 توقف ضبط"
+            
+            // افکت چشمک زدن متن
+            startBlinkingStatus()
         }
+    }
+
+    private fun startBlinkingStatus() {
+        blinkAnimation = AlphaAnimation(0.3f, 1.0f).apply {
+            duration = 800
+            repeatCount = Animation.INFINITE
+            repeatMode = Animation.REVERSE
+        }
+        micStatusText.startAnimation(blinkAnimation)
     }
 
     private fun startVoiceInput() {
@@ -547,11 +569,31 @@ class MainActivity : AppCompatActivity() {
         }
 
         speechRecognizer?.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) { runOnUiThread { Toast.makeText(this@MainActivity, "گوش می‌دهم...", Toast.LENGTH_SHORT).show() } }
-            override fun onBeginningOfSpeech() = Unit
-            override fun onRmsChanged(rmsdB: Float) = Unit
+            override fun onReadyForSpeech(params: Bundle?) {
+                // آماده شنیدن
+            }
+            override fun onBeginningOfSpeech() {
+                // کاربر شروع به حرف زدن کرد
+                runOnUiThread {
+                    micStatusText.text = "در حال گوش دادن..."
+                    micStatusText.setTextColor(Color.parseColor("#4CAF50")) // سبز روشن
+                    micStatusText.clearAnimation() // قطع چشمک زدن موقع حرف زدن
+                }
+            }
+            override fun onRmsChanged(rmsdB: Float) {
+                // نوسان صدا - نیازی به کار خاصی نیست
+            }
             override fun onBufferReceived(buffer: ByteArray?) = Unit
-            override fun onEndOfSpeech() = Unit
+            override fun onEndOfSpeech() {
+                // کاربر ساکت شد
+                runOnUiThread {
+                    if (continuousSpeech) {
+                        micStatusText.text = "صحبت کنید..."
+                        micStatusText.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+                        startBlinkingStatus()
+                    }
+                }
+            }
 
             override fun onPartialResults(partialResults: Bundle?) {
                 val partial = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
@@ -582,9 +624,10 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
+                // 🔧 ری‌استارت فوری و بی‌صدا (بدون اینکه کاربر متوجه بشه)
                 if (continuousSpeech) {
                     handler.removeCallbacks(restartRunnable)
-                    handler.postDelayed(restartRunnable, 800)
+                    handler.postDelayed(restartRunnable, 10) // تاخیر خیلی کم
                 }
             }
 
@@ -597,9 +640,10 @@ class MainActivity : AppCompatActivity() {
                     startVoiceInput()
                     return
                 }
+                // 🔧 اگر خطا فقط سکوت بود (NO_MATCH) یا زمان تمام شد، سریع ری‌استارت کن
                 if (continuousSpeech) {
                     handler.removeCallbacks(restartRunnable)
-                    handler.postDelayed(restartRunnable, 1000)
+                    handler.postDelayed(restartRunnable, 10)
                 }
             }
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
@@ -614,8 +658,9 @@ class MainActivity : AppCompatActivity() {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
+            // 🔧 تنظیم زمان سکوت برای اینکه وسط حرف مکث نکنه
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000L)
         }
         try { speechRecognizer?.startListening(intent) } catch (e: Exception) { isListening = false }
@@ -625,6 +670,10 @@ class MainActivity : AppCompatActivity() {
         continuousSpeech = false
         isListening = false
         handler.removeCallbacks(restartRunnable)
+        if (blinkAnimation != null) {
+            micStatusText.clearAnimation()
+            blinkAnimation = null
+        }
         try { speechRecognizer?.stopListening(); speechRecognizer?.destroy() } catch (_: Exception) {}
         speechRecognizer = null
     }
@@ -670,6 +719,8 @@ class MainActivity : AppCompatActivity() {
         selectedReminderAt = 0L; selectedReminderEnabled = false; selectedRepeatMode = "none"
         selectedRepeatCount = 0; selectedRepeatInterval = 60; selectedRingtoneUri = ""
         reminderSummary.text = REMINDER_NONE_TEXT
+        micStatusText.visibility = View.GONE
+        micButton.text = "🎤 شروع ضبط صدا"
     }
 
     private fun editNote(note: Note) {
