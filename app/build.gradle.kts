@@ -3,11 +3,6 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-dependencies {
-    // ... بقیه خطوط
-    implementation("androidx.core:core-splashscreen:1.0.1")
-}
-
 val releaseStoreFile = System.getenv("KEYSTORE_FILE")
 val releaseStorePassword = System.getenv("KEYSTORE_PASSWORD")
 val releaseKeyAlias = System.getenv("KEY_ALIAS")
@@ -71,10 +66,9 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
-    
-    // 🔧 کتابخانه متریال برای دکمه شناور (FAB) و تم روز/شب
-    implementation("com.google.android.material:material:1.12.0") 
-    
-    // 🔧 کتابخانه RecyclerView برای نمایش مرتب و دو ستونه کارت‌ها
+    implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
+    
+    // 🔧 کتابخانه صفحه لودینگ (Splash Screen)
+    implementation("androidx.core:core-splashscreen:1.0.1")
 }
