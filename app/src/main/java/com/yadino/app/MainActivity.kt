@@ -171,7 +171,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ===================================================================
-    // دیزاین لاکچری + افکت‌ها
+    // دیزاین لاکچری + افکت‌ها + قاب طلایی
     // ===================================================================
     private fun buildScreen() {
         val root = FrameLayout(this).apply {
@@ -185,31 +185,50 @@ class MainActivity : AppCompatActivity() {
             setPadding(40, 60, 40, 250)
         }
 
-        content.addView(TextView(this).apply {
+        // 🔧 لوگوی طلایی با افکت گرادیانت (فلزی)
+        val titleTv = TextView(this).apply {
             text = "یادینو"
-            textSize = 36f
-            setTextColor(Color.parseColor(COLOR_TEXT_PRIMARY))
+            textSize = 44f
             gravity = Gravity.CENTER
-            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            setPadding(0, 0, 0, 30)
-        })
+            typeface = Typeface.create("sans-serif-black", Typeface.BOLD)
+            setPadding(0, 10, 0, 40)
+        }
+        // اعمال گرادیانت طلایی بعد از رندر شدن ویو
+        titleTv.post {
+            val paint = titleTv.paint
+            val width = paint.measureText(titleTv.text.toString())
+            val shader = android.graphics.LinearGradient(
+                0f, 0f, width, titleTv.textSize,
+                intArrayOf(
+                    Color.parseColor("#F3E5AB"), // طلایی روشن
+                    Color.parseColor("#D4AF37"), // طلایی اصلی
+                    Color.parseColor("#AA8B2B")  // طلایی تیره
+                ),
+                null,
+                android.graphics.Shader.TileMode.CLAMP
+            )
+            paint.shader = shader
+            titleTv.invalidate()
+        }
+        content.addView(titleTv)
 
         formContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
         }
 
-        // استایل دادن به فیلدهای متنی با افکت کلیک (Ripple)
+        // 🔧 استایل فیلدهای متنی با قاب طلایی
         fun styleInput(editText: EditText) {
             editText.setTextColor(Color.parseColor(COLOR_TEXT_PRIMARY))
             editText.setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+            
             val bg = GradientDrawable().apply {
                 setColor(Color.parseColor(COLOR_CARD))
                 cornerRadius = 30f
-                setStroke(2, Color.parseColor(COLOR_CARD_BORDER))
+                setStroke(4, Color.parseColor(COLOR_GOLD)) // قاب طلایی (ضخامت ۴)
             }
-            // ایجاد افکت موج (Ripple) روی فیلد متنی
-            val ripple = RippleDrawable(ColorStateList.valueOf(Color.parseColor("#33D4AF37")), bg, null)
+            // افکت موج طلایی شفاف
+            val ripple = RippleDrawable(ColorStateList.valueOf(Color.parseColor("#55D4AF37")), bg, null)
             editText.background = ripple
             editText.setPadding(30, 30, 30, 30)
             editText.textSize = 16f
@@ -241,7 +260,7 @@ class MainActivity : AppCompatActivity() {
         taskInput.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) speechTarget = taskInput }
         formContainer.addView(taskInput, matchWidth())
 
-        // دکمه‌های گرادیانتی با افکت موج
+        // دکمه‌های طلایی
         fun createGoldButton(text: String, onClick: () -> Unit): Button {
             return Button(this).apply {
                 this.text = text
@@ -249,17 +268,14 @@ class MainActivity : AppCompatActivity() {
                 textSize = 16f
                 typeface = Typeface.DEFAULT_BOLD
                 
-                // 🔧 افکت گرادیانت طلایی
                 val gradient = GradientDrawable(
                     GradientDrawable.Orientation.TL_BR, 
                     intArrayOf(Color.parseColor(COLOR_GOLD), Color.parseColor(COLOR_GOLD_DARK))
                 ).apply { cornerRadius = 30f }
                 
-                // 🔧 افکت موج با رنگ مشکی ملایم
                 val ripple = RippleDrawable(ColorStateList.valueOf(Color.parseColor("#33000000")), gradient, null)
                 background = ripple
                 
-                // 🔧 انیمیشن کوچک شدن هنگام کلیک
                 setOnClickListener { view ->
                     view.animate().scaleX(0.95f).scaleY(0.95f).setDuration(100).withEndAction {
                         view.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
@@ -318,19 +334,17 @@ class MainActivity : AppCompatActivity() {
         mainScroll.addView(content)
         root.addView(mainScroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
-        // 🔧 FAB با افکت انیمیشن
         val fab = FloatingActionButton(this).apply {
             setImageResource(android.R.drawable.ic_input_add)
             imageTintList = ColorStateList.valueOf(Color.parseColor(COLOR_BG)) 
             backgroundTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
             compatElevation = 20f
             
-            // انیمیشن چرخش هنگام کلیک
             setOnClickListener { view ->
                 view.animate().rotation(90f).setDuration(200).withEndAction {
                     formContainer.visibility = View.VISIBLE
                     mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) }
-                    view.animate().rotation(0f).setDuration(0).start() // ریست چرخش
+                    view.animate().rotation(0f).setDuration(0).start()
                 }.start()
             }
         }
@@ -365,9 +379,6 @@ class MainActivity : AppCompatActivity() {
         noteAdapter.updateData(visibleNotes)
     }
 
-    // ===================================================================
-    // آداپتر کارت‌های لاکچری با MaterialCardView و انیمیشن
-    // ===================================================================
     inner class NoteAdapter(
         private var items: List<Note>,
         private val onClick: (Note) -> Unit,
@@ -383,7 +394,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-            // 🔧 استفاده از MaterialCardView برای سایه و افکت‌های استاندارد
             val card = MaterialCardView(parent.context).apply {
                 layoutParams = RecyclerView.LayoutParams(
                     RecyclerView.LayoutParams.MATCH_PARENT,
@@ -393,15 +403,14 @@ class MainActivity : AppCompatActivity() {
                     bottomMargin = 30
                 }
                 radius = 40f
-                cardElevation = 15f // سایه
+                cardElevation = 15f
                 strokeWidth = 2
                 strokeColor = Color.parseColor(COLOR_CARD_BORDER)
                 setCardBackgroundColor(Color.parseColor(COLOR_CARD))
-                rippleColor = ColorStateList.valueOf(Color.parseColor("#33D4AF37")) // موج طلایی
+                rippleColor = ColorStateList.valueOf(Color.parseColor("#33D4AF37"))
                 isClickable = true
                 isFocusable = true
                 
-                // چیدمان داخلی کارت
                 val innerLayout = LinearLayout(parent.context).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(40, 40, 40, 40)
@@ -463,7 +472,6 @@ class MainActivity : AppCompatActivity() {
                 holder.progress.visibility = View.GONE
             }
 
-            // 🔧 انیمیشن ورود برای هر کارت (Fade in & Slide up)
             holder.card.alpha = 0f
             holder.card.translationY = 50f
             holder.card.animate()
@@ -473,7 +481,6 @@ class MainActivity : AppCompatActivity() {
                 .setInterpolator(DecelerateInterpolator())
                 .start()
 
-            // 🔧 افکت کلیک (Scale)
             holder.card.setOnClickListener { view ->
                 view.animate().scaleX(0.95f).scaleY(0.95f).setDuration(100).withEndAction {
                     view.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
@@ -486,9 +493,6 @@ class MainActivity : AppCompatActivity() {
         override fun getItemCount() = items.size
     }
 
-    // ===================================================================
-    // بخش‌های منطقی
-    // ===================================================================
     private fun toggleVoiceInput(offline: Boolean) {
         if (continuousSpeech) stopContinuousSpeech()
         else {
