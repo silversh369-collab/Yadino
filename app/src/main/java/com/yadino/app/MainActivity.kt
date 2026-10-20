@@ -14,9 +14,9 @@ import android.content.pm.PackageManager
 import android.media.RingtoneManager
 import android.os.Build
 import android.os.Bundle
+import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.speech.RecognitionListener
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -37,6 +37,7 @@ import java.util.Calendar
 import java.util.Locale
 import java.util.UUID
 
+private const val TAG = "Yadino"
 private const val STORAGE_NAME = "yadino_secure_storage"
 private const val NOTES_KEY = "notes_json"
 private const val PIN_KEY = "pin_hash"
@@ -44,6 +45,13 @@ private const val CHANNEL_ID = "yadino_reminders"
 private const val VOICE_REQUEST_CODE = 7001
 private const val AUDIO_PERMISSION_CODE = 7002
 private const val NOTIFICATION_PERMISSION_CODE = 7003
+
+// ثابت‌های رشته‌ای که چند جا تکرار می‌شوند (مرحله بعد: انتقال کامل به strings.xml)
+private const val REMINDER_NONE_TEXT = "یادآور تنظیم نشده است"
+private const val REMINDER_DISABLED_TEXT = "یادآور غیرفعال است"
+
+// حداکثر تعداد ری‌استارت گفتار پیوسته در صورت خطا (جلوگیری از حلقه بی‌نهایت)
+private const val MAX_CONTINUOUS_SPEECH_RETRIES = 5
 
 data class Task(
     val id: String = UUID.randomUUID().toString(),
@@ -69,12 +77,14 @@ data class Note(
 
 class MainActivity : AppCompatActivity() {
 
+    // --- داده‌ها و لیست‌ها ---
     private val categories = listOf(
         "همه دسته‌ها", "عمومی", "کار", "شخصی", "خرید", "درس", "ایده‌ها"
     )
-
     private val notes = mutableListOf<Note>()
+    private val draftTasks = mutableListOf<Task>()
 
+    // --- ویوها ---
     private lateinit var titleInput: EditText
     private lateinit var bodyInput: EditText
     private lateinit var categorySpinner: Spinner
@@ -83,8 +93,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var notesContainer: LinearLayout
     private lateinit var statusText: TextView
     private lateinit var filterSpinner: Spinner
+    private lateinit var draftTaskContainer: LinearLayout
+    private lateinit var reminderSummary: TextView
     private lateinit var securePrefs: android.content.SharedPreferences
 
+    // --- وضعیت ---
     private var editingNoteId: String? = null
     private var selectedReminderAt: Long = 0L
     private var selectedReminderEnabled = false
@@ -92,10 +105,35 @@ class MainActivity : AppCompatActivity() {
     private var selectedRepeatCount = 0
     private var selectedRepeatInterval = 60
     private var selectedRingtoneUri = ""
+
+    // --- گفتار ---
     private var speechRecognizer: SpeechRecognizer? = null
     private var continuousSpeech = false
     private var speechTarget: EditText? = null
     private var speechRestartRequested = false
+    private var continuousSpeechRetryCount = 0
+
+    // ثبت Launcher در زمان ساخت، قبل از onCreate — روش استاندارد
+    private val ringtonePickerLauncher =
+        registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    result.data?.getParcelableExtra(
+                        RingtoneManager.EXTRA_RINGTONE_PICKED_URI,
+                        android.net.Uri::class.java
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    result.data?.getParcelableExtra(
+                        RingtoneManager.EXTRA_RINGTONE_PICKED_URI
+                    )
+                }
+                selectedRingtoneUri = uri?.toString() ?: ""
+            }
+            updateReminderSummary()
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -108,15 +146,20 @@ class MainActivity : AppCompatActivity() {
             renderNotes()
             requestNotificationPermissionIfNeeded()
         } catch (e: Exception) {
-            Log.e("Yadino", "Startup failed", e)
+            Log.e(TAG, "Startup failed", e)
             Toast.makeText(
                 this,
                 "راه‌اندازی برنامه با خطا روبه‌رو شد: ${e.message}",
                 Toast.LENGTH_LONG
             ).show()
+            // جلوگیری از کار با state ناقص
+            finish()
         }
     }
 
+    // ===================================================================
+    // ذخیره‌سازی امن
+    // ===================================================================
     private fun initializeSecureStorage() {
         val masterKey = MasterKey.Builder(this)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -131,6 +174,9 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    // ===================================================================
+    // ساخت رابط کاربری
+    // ===================================================================
     private fun buildScreen() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -144,13 +190,14 @@ class MainActivity : AppCompatActivity() {
             layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
 
-        val heading = TextView(this).apply {
-            text = "یادینو"
-            textSize = 28f
-            gravity = Gravity.CENTER
-            setPadding(8, 8, 8, 18)
-        }
-        content.addView(heading)
+        content.addView(
+            TextView(this).apply {
+                text = "یادینو"
+                textSize = 28f
+                gravity = Gravity.CENTER
+                setPadding(8, 8, 8, 18)
+            }
+        )
 
         titleInput = EditText(this).apply {
             hint = "عنوان یادداشت"
@@ -180,18 +227,20 @@ class MainActivity : AppCompatActivity() {
         }
         content.addView(taskInput, matchWidth())
 
-        val addTaskButton = Button(this).apply {
-            text = "افزودن کار به یادداشت"
-            setOnClickListener {
-                val value = taskInput.text.toString().trim()
-                if (value.isNotEmpty()) {
-                    draftTasks.add(Task(text = value))
-                    taskInput.text.clear()
-                    renderDraftTasks()
+        content.addView(
+            Button(this).apply {
+                text = "افزودن کار به یادداشت"
+                setOnClickListener {
+                    val value = taskInput.text.toString().trim()
+                    if (value.isNotEmpty()) {
+                        draftTasks.add(Task(text = value))
+                        taskInput.text.clear()
+                        renderDraftTasks()
+                    }
                 }
-            }
-        }
-        content.addView(addTaskButton, matchWidth())
+            },
+            matchWidth()
+        )
 
         draftTaskContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -202,7 +251,6 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-
         voiceRow.addView(
             Button(this).apply {
                 text = "ورود صوتی عنوان"
@@ -210,7 +258,6 @@ class MainActivity : AppCompatActivity() {
             },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-
         voiceRow.addView(
             Button(this).apply {
                 text = "گفتار پیوسته"
@@ -235,16 +282,18 @@ class MainActivity : AppCompatActivity() {
         )
 
         reminderSummary = TextView(this).apply {
-            text = "یادآور تنظیم نشده است"
+            text = REMINDER_NONE_TEXT
             setPadding(4, 8, 4, 8)
         }
         content.addView(reminderSummary, matchWidth())
 
-        val saveButton = Button(this).apply {
-            text = "ذخیره یادداشت"
-            setOnClickListener { saveCurrentNote() }
-        }
-        content.addView(saveButton, matchWidth())
+        content.addView(
+            Button(this).apply {
+                text = "ذخیره یادداشت"
+                setOnClickListener { saveCurrentNote() }
+            },
+            matchWidth()
+        )
 
         content.addView(
             Button(this).apply {
@@ -307,10 +356,6 @@ class MainActivity : AppCompatActivity() {
         setContentView(root)
     }
 
-    private lateinit var draftTaskContainer: LinearLayout
-    private lateinit var reminderSummary: TextView
-    private val draftTasks = mutableListOf<Task>()
-
     private fun matchWidth(): LinearLayout.LayoutParams =
         LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -320,15 +365,14 @@ class MainActivity : AppCompatActivity() {
         }
 
     private fun spinnerAdapter(items: List<String>): ArrayAdapter<String> {
-        return ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_item,
-            items
-        ).also {
+        return ArrayAdapter(this, android.R.layout.simple_spinner_item, items).also {
             it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         }
     }
 
+    // ===================================================================
+    // کارهای موقت (Draft Tasks)
+    // ===================================================================
     private fun renderDraftTasks() {
         draftTaskContainer.removeAllViews()
         draftTasks.forEachIndexed { index, task ->
@@ -336,7 +380,6 @@ class MainActivity : AppCompatActivity() {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
             }
-
             row.addView(
                 TextView(this).apply {
                     text = task.text
@@ -344,7 +387,6 @@ class MainActivity : AppCompatActivity() {
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             )
-
             row.addView(
                 Button(this).apply {
                     text = "حذف"
@@ -358,6 +400,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ===================================================================
+    // ذخیره / بازیابی یادداشت
+    // ===================================================================
     private fun saveCurrentNote() {
         val title = titleInput.text.toString().trim()
         val body = bodyInput.text.toString().trim()
@@ -371,9 +416,7 @@ class MainActivity : AppCompatActivity() {
         val isPrivate = privateCheckBox.isChecked
 
         if (isPrivate && securePrefs.getString(PIN_KEY, null).isNullOrBlank()) {
-            showSetPinDialog {
-                persistCurrentNote(title, body, category, isPrivate)
-            }
+            showSetPinDialog { persistCurrentNote(title, body, category, isPrivate) }
         } else if (isPrivate) {
             requestPin("برای ذخیره یادداشت خصوصی، PIN را وارد کن") { valid ->
                 if (valid) persistCurrentNote(title, body, category, true)
@@ -389,7 +432,7 @@ class MainActivity : AppCompatActivity() {
         category: String,
         isPrivate: Boolean
     ) {
-        val existing = notes.find { it.id == editingNoteId }
+        val existing = editingNoteId?.let { id -> notes.find { it.id == id } }
 
         val note = existing ?: Note(
             title = title,
@@ -402,6 +445,7 @@ class MainActivity : AppCompatActivity() {
         note.category = category
         note.isPrivate = isPrivate
 
+        // حفظ وضعیت done تسک‌ها بر اساس متن
         val oldDoneByText = note.tasks.associate { it.text to it.done }
         note.tasks.clear()
         draftTasks.forEach { task ->
@@ -414,12 +458,8 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        note.reminderAt = selectedReminderAt
-        note.reminderEnabled = selectedReminderEnabled
-        note.repeatMode = selectedRepeatMode
-        note.repeatCount = selectedRepeatCount
-        note.repeatIntervalMinutes = selectedRepeatInterval
-        note.ringtoneUri = selectedRingtoneUri
+        // اعمال تنظیمات یادآور به‌صورت یکجا
+        applyReminderSettings(note)
 
         if (existing == null) notes.add(0, note)
 
@@ -435,6 +475,29 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "یادداشت ذخیره شد.", Toast.LENGTH_SHORT).show()
     }
 
+    /** کپی مقادیر یادآور فعلی به روی Note */
+    private fun applyReminderSettings(note: Note) {
+        note.reminderAt = selectedReminderAt
+        note.reminderEnabled = selectedReminderEnabled
+        note.repeatMode = selectedRepeatMode
+        note.repeatCount = selectedRepeatCount
+        note.repeatIntervalMinutes = selectedRepeatInterval
+        note.ringtoneUri = selectedRingtoneUri
+    }
+
+    /** بازنشانی وضعیت یادآور به حالت پیش‌فرض */
+    private fun resetReminderSettings() {
+        selectedReminderAt = 0L
+        selectedReminderEnabled = false
+        selectedRepeatMode = "none"
+        selectedRepeatCount = 0
+        selectedRepeatInterval = 60
+        selectedRingtoneUri = ""
+        if (::reminderSummary.isInitialized) {
+            reminderSummary.text = REMINDER_NONE_TEXT
+        }
+    }
+
     private fun clearForm() {
         titleInput.text.clear()
         bodyInput.text.clear()
@@ -445,15 +508,12 @@ class MainActivity : AppCompatActivity() {
         renderDraftTasks()
 
         editingNoteId = null
-        selectedReminderAt = 0L
-        selectedReminderEnabled = false
-        selectedRepeatMode = "none"
-        selectedRepeatCount = 0
-        selectedRepeatInterval = 60
-        selectedRingtoneUri = ""
-        reminderSummary.text = "یادآور تنظیم نشده است"
+        resetReminderSettings()
     }
 
+    // ===================================================================
+    // رندر لیست یادداشت‌ها
+    // ===================================================================
     private fun renderNotes() {
         if (!::notesContainer.isInitialized) return
 
@@ -470,6 +530,9 @@ class MainActivity : AppCompatActivity() {
 
         statusText.text = "یادداشت‌ها (${visibleNotes.size})"
 
+        // تبدیل dp به پیکسل برای حاشیه کارت
+        val strokePx = (1 * resources.displayMetrics.density).toInt()
+
         visibleNotes.forEach { note ->
             val card = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -477,7 +540,7 @@ class MainActivity : AppCompatActivity() {
                 background = android.graphics.drawable.GradientDrawable().apply {
                     setColor(0xFFF2F2F2.toInt())
                     cornerRadius = 18f
-                    setStroke(1, 0xFFDDDDDD.toInt())
+                    setStroke(strokePx, 0xFFDDDDDD.toInt())
                 }
             }
 
@@ -514,7 +577,6 @@ class MainActivity : AppCompatActivity() {
                     },
                     matchWidth()
                 )
-
                 note.tasks.forEach { task ->
                     card.addView(
                         CheckBox(this).apply {
@@ -536,7 +598,6 @@ class MainActivity : AppCompatActivity() {
                     "yyyy/MM/dd HH:mm",
                     Locale.getDefault()
                 ).format(note.reminderAt)
-
                 card.addView(
                     TextView(this).apply {
                         text = "یادآور: $date"
@@ -550,7 +611,6 @@ class MainActivity : AppCompatActivity() {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER
             }
-
             actions.addView(
                 Button(this).apply {
                     text = "ویرایش"
@@ -566,7 +626,6 @@ class MainActivity : AppCompatActivity() {
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             )
-
             actions.addView(
                 Button(this).apply {
                     text = "حذف"
@@ -584,7 +643,6 @@ class MainActivity : AppCompatActivity() {
                                 }
                                 .show()
                         }
-
                         if (note.isPrivate) {
                             requestPin("برای حذف یادداشت خصوصی، PIN را وارد کن") { valid ->
                                 if (valid) deleteAction()
@@ -596,7 +654,6 @@ class MainActivity : AppCompatActivity() {
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             )
-
             card.addView(actions, matchWidth())
             notesContainer.addView(card, matchWidth())
         }
@@ -628,13 +685,16 @@ class MainActivity : AppCompatActivity() {
                 Locale.getDefault()
             ).format(note.reminderAt)
         } else {
-            "یادآور تنظیم نشده است"
+            REMINDER_NONE_TEXT
         }
 
         titleInput.requestFocus()
         Toast.makeText(this, "یادداشت برای ویرایش بارگذاری شد.", Toast.LENGTH_SHORT).show()
     }
 
+    // ===================================================================
+    // یادآور
+    // ===================================================================
     private fun configureReminder() {
         val calendar = Calendar.getInstance().apply {
             if (selectedReminderAt > System.currentTimeMillis()) {
@@ -678,35 +738,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun configureRepeatOptions() {
         val choices = arrayOf(
-            "بدون تکرار",
-            "هر روز",
-            "هر هفته",
-            "هر ماه",
-            "فاصله زمانی دلخواه",
-            "تعداد دفعات محدود"
+            "بدون تکرار", "هر روز", "هر هفته", "هر ماه",
+            "فاصله زمانی دلخواه", "تعداد دفعات محدود"
         )
 
         AlertDialog.Builder(this)
             .setTitle("تکرار یادآور")
             .setItems(choices) { _, which ->
                 when (which) {
-                    0 -> {
-                        selectedRepeatMode = "none"
-                        selectedRepeatCount = 0
-                        chooseRingtone()
-                    }
-                    1 -> {
-                        selectedRepeatMode = "daily"
-                        chooseRingtone()
-                    }
-                    2 -> {
-                        selectedRepeatMode = "weekly"
-                        chooseRingtone()
-                    }
-                    3 -> {
-                        selectedRepeatMode = "monthly"
-                        chooseRingtone()
-                    }
+                    0 -> { selectedRepeatMode = "none"; selectedRepeatCount = 0; chooseRingtone() }
+                    1 -> { selectedRepeatMode = "daily"; chooseRingtone() }
+                    2 -> { selectedRepeatMode = "weekly"; chooseRingtone() }
+                    3 -> { selectedRepeatMode = "monthly"; chooseRingtone() }
                     4 -> configureCustomInterval()
                     5 -> configureRepeatCount()
                 }
@@ -716,7 +759,7 @@ class MainActivity : AppCompatActivity() {
                 selectedReminderAt = 0L
                 selectedRepeatMode = "none"
                 selectedRepeatCount = 0
-                reminderSummary.text = "یادآور غیرفعال است"
+                reminderSummary.text = REMINDER_DISABLED_TEXT
             }
             .show()
     }
@@ -738,7 +781,6 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "فاصله باید حداقل یک دقیقه باشد.", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
-
                 selectedRepeatInterval = interval
                 selectedRepeatMode = "interval"
                 chooseRingtone()
@@ -772,10 +814,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle("صدای یادآور")
             .setItems(options) { _, which ->
                 when (which) {
-                    0 -> {
-                        selectedRingtoneUri = ""
-                        updateReminderSummary()
-                    }
+                    0 -> { selectedRingtoneUri = ""; updateReminderSummary() }
                     1 -> {
                         val intent = Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
                             putExtra(
@@ -788,39 +827,16 @@ class MainActivity : AppCompatActivity() {
                         }
                         ringtonePickerLauncher.launch(intent)
                     }
-                    2 -> {
-                        selectedRingtoneUri = "silent"
-                        updateReminderSummary()
-                    }
+                    2 -> { selectedRingtoneUri = "silent"; updateReminderSummary() }
                 }
             }
             .show()
     }
 
-    private val ringtonePickerLauncher =
-        registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
-                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    result.data?.getParcelableExtra(
-                        RingtoneManager.EXTRA_RINGTONE_PICKED_URI,
-                        android.net.Uri::class.java
-                    )
-                } else {
-                    @Suppress("DEPRECATION")
-                    result.data?.getParcelableExtra(
-                        RingtoneManager.EXTRA_RINGTONE_PICKED_URI
-                    )
-                }
-                selectedRingtoneUri = uri?.toString() ?: ""
-            }
-            updateReminderSummary()
-        }
-
     private fun updateReminderSummary() {
         reminderSummary.text = if (selectedReminderEnabled && selectedReminderAt > 0) {
             val date = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault())
                 .format(selectedReminderAt)
-
             val repeat = when (selectedRepeatMode) {
                 "daily" -> "روزانه"
                 "weekly" -> "هفتگی"
@@ -831,7 +847,7 @@ class MainActivity : AppCompatActivity() {
             }
             "یادآور: $date | تکرار: $repeat"
         } else {
-            "یادآور تنظیم نشده است"
+            REMINDER_NONE_TEXT
         }
     }
 
@@ -861,24 +877,19 @@ class MainActivity : AppCompatActivity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                 !alarmManager.canScheduleExactAlarms()
             ) {
+                // نکته: برای exact alarm در API 31+ به مجوز SCHEDULE_EXACT_ALARM در Manifest نیاز است
                 alarmManager.setAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    note.reminderAt,
-                    pendingIntent
+                    AlarmManager.RTC_WAKEUP, note.reminderAt, pendingIntent
                 )
             } else {
                 alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    note.reminderAt,
-                    pendingIntent
+                    AlarmManager.RTC_WAKEUP, note.reminderAt, pendingIntent
                 )
             }
         } catch (e: SecurityException) {
-            Log.e("Yadino", "Cannot schedule exact alarm", e)
+            Log.e(TAG, "Cannot schedule exact alarm", e)
             alarmManager.setAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                note.reminderAt,
-                pendingIntent
+                AlarmManager.RTC_WAKEUP, note.reminderAt, pendingIntent
             )
         }
     }
@@ -889,13 +900,19 @@ class MainActivity : AppCompatActivity() {
             this,
             noteId.hashCode(),
             intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            // FLAG_NO_CREATE: اگر PendingIntent وجود نداشته باشد، null برمی‌گرداند
+            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
         )
-        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        alarmManager.cancel(pendingIntent)
-        pendingIntent.cancel()
+        if (pendingIntent != null) {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            alarmManager.cancel(pendingIntent)
+            pendingIntent.cancel()
+        }
     }
 
+    // ===================================================================
+    // اعلان‌ها
+    // ===================================================================
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = android.app.NotificationChannel(
@@ -906,7 +923,6 @@ class MainActivity : AppCompatActivity() {
                 description = "اعلان‌های یادآور یادداشت‌ها"
                 enableVibration(true)
             }
-
             val manager = getSystemService(Context.NOTIFICATION_SERVICE)
                 as android.app.NotificationManager
             manager.createNotificationChannel(channel)
@@ -928,6 +944,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ===================================================================
+    // ورودی صوتی
+    // ===================================================================
     private fun startVoiceInput(target: EditText, continuous: Boolean) {
         if (ContextCompat.checkSelfPermission(
                 this,
@@ -959,16 +978,17 @@ class MainActivity : AppCompatActivity() {
         speechTarget = target
         continuousSpeech = continuous
         speechRestartRequested = continuous
+        continuousSpeechRetryCount = 0
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
-        ) {
-            speechRecognizer?.destroy()
-            speechRecognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
-        } else {
-            speechRecognizer?.destroy()
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
-        }
+        speechRecognizer?.destroy()
+        speechRecognizer =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
+            ) {
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
+            } else {
+                SpeechRecognizer.createSpeechRecognizer(this)
+            }
 
         speechRecognizer?.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
@@ -980,21 +1000,32 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-
             override fun onBeginningOfSpeech() = Unit
             override fun onRmsChanged(rmsdB: Float) = Unit
             override fun onBufferReceived(buffer: ByteArray?) = Unit
             override fun onEndOfSpeech() = Unit
 
             override fun onError(error: Int) {
-                if (continuousSpeech && speechRestartRequested) {
+                if (continuousSpeech && speechRestartRequested &&
+                    continuousSpeechRetryCount < MAX_CONTINUOUS_SPEECH_RETRIES
+                ) {
+                    continuousSpeechRetryCount++
                     statusText.postDelayed({
-                        if (continuousSpeech && speechRestartRequested) {
-                            launchRecognizer()
-                        }
+                        if (continuousSpeech && speechRestartRequested) launchRecognizer()
                     }, 400)
                 } else {
-                    statusText.text = "تشخیص گفتار پایان یافت."
+                    if (continuousSpeechRetryCount >= MAX_CONTINUOUS_SPEECH_RETRIES) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "تشخیص گفتار پیوسته پس از چند تلاش متوقف شد.",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    continuousSpeech = false
+                    speechRestartRequested = false
+                    if (::statusText.isInitialized) {
+                        statusText.text = "تشخیص گفتار پایان یافت."
+                    }
                 }
             }
 
@@ -1010,22 +1041,19 @@ class MainActivity : AppCompatActivity() {
                         if (target != null) {
                             val old = target.text.toString()
                             target.setText(
-                                if (continuousSpeech && old.isNotBlank()) {
-                                    "$old $spoken"
-                                } else {
-                                    spoken
-                                }
+                                if (continuousSpeech && old.isNotBlank()) "$old $spoken" else spoken
                             )
                             target.setSelection(target.text.length)
                         }
                     }
                 }
 
+                // موفقیت ← شمارنده ری‌استارت را صفر کن
+                continuousSpeechRetryCount = 0
+
                 if (continuousSpeech && speechRestartRequested) {
                     statusText.postDelayed({
-                        if (continuousSpeech && speechRestartRequested) {
-                            launchRecognizer()
-                        }
+                        if (continuousSpeech && speechRestartRequested) launchRecognizer()
                     }, 300)
                 }
             }
@@ -1048,11 +1076,10 @@ class MainActivity : AppCompatActivity() {
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
         }
-
         try {
             speechRecognizer?.startListening(intent)
         } catch (e: Exception) {
-            Log.e("Yadino", "Voice recognition start failed", e)
+            Log.e(TAG, "Voice recognition start failed", e)
             stopContinuousSpeech()
         }
     }
@@ -1060,21 +1087,26 @@ class MainActivity : AppCompatActivity() {
     private fun stopContinuousSpeech() {
         continuousSpeech = false
         speechRestartRequested = false
+        continuousSpeechRetryCount = 0
         try {
             speechRecognizer?.stopListening()
             speechRecognizer?.cancel()
             speechRecognizer?.destroy()
         } catch (e: Exception) {
-            Log.w("Yadino", "Speech recognizer cleanup failed", e)
+            Log.w(TAG, "Speech recognizer cleanup failed", e)
         }
         speechRecognizer = null
-        statusText.text = "گفتار پیوسته متوقف شد."
+        if (::statusText.isInitialized) {
+            statusText.text = "گفتار پیوسته متوقف شد."
+        }
     }
 
+    // ===================================================================
+    // ذخیره/بازیابی JSON
+    // ===================================================================
     private fun saveNotes() {
         try {
             val array = JSONArray()
-
             notes.forEach { note ->
                 val obj = JSONObject().apply {
                     put("id", note.id)
@@ -1105,21 +1137,18 @@ class MainActivity : AppCompatActivity() {
                 }
                 array.put(obj)
             }
-
             securePrefs.edit().putString(NOTES_KEY, array.toString()).apply()
         } catch (e: Exception) {
-            Log.e("Yadino", "Saving notes failed", e)
+            Log.e(TAG, "Saving notes failed", e)
             Toast.makeText(this, "ذخیره اطلاعات با خطا روبه‌رو شد.", Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun loadNotes() {
         notes.clear()
-
         val raw = securePrefs.getString(NOTES_KEY, null) ?: return
         try {
             val array = JSONArray(raw)
-
             for (i in 0 until array.length()) {
                 val obj = array.optJSONObject(i) ?: continue
                 val tasks = mutableListOf<Task>()
@@ -1129,9 +1158,7 @@ class MainActivity : AppCompatActivity() {
                     val taskObj = tasksArray.optJSONObject(j) ?: continue
                     tasks.add(
                         Task(
-                            id = taskObj.optString("id").ifBlank {
-                                UUID.randomUUID().toString()
-                            },
+                            id = taskObj.optString("id").ifBlank { UUID.randomUUID().toString() },
                             text = taskObj.optString("text"),
                             done = taskObj.optBoolean("done", false)
                         )
@@ -1140,9 +1167,7 @@ class MainActivity : AppCompatActivity() {
 
                 notes.add(
                     Note(
-                        id = obj.optString("id").ifBlank {
-                            UUID.randomUUID().toString()
-                        },
+                        id = obj.optString("id").ifBlank { UUID.randomUUID().toString() },
                         title = obj.optString("title"),
                         body = obj.optString("body"),
                         category = obj.optString("category", "عمومی"),
@@ -1159,17 +1184,19 @@ class MainActivity : AppCompatActivity() {
                 )
             }
         } catch (e: Exception) {
-            Log.e("Yadino", "Loading notes failed", e)
+            Log.e(TAG, "Loading notes failed", e)
         }
     }
 
+    // ===================================================================
+    // مدیریت PIN
+    // ===================================================================
     private fun showSetPinDialog(onSuccess: () -> Unit) {
         val input = EditText(this).apply {
             hint = "PIN جدید (حداقل ۴ رقم)"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or
                 android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
         }
-
         AlertDialog.Builder(this)
             .setTitle("ساخت PIN")
             .setView(input)
@@ -1180,7 +1207,6 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "PIN باید حداقل ۴ رقم باشد.", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
-
                 securePrefs.edit().putString(PIN_KEY, hashPin(pin)).apply()
                 onSuccess()
             }
@@ -1193,7 +1219,6 @@ class MainActivity : AppCompatActivity() {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or
                 android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
         }
-
         AlertDialog.Builder(this)
             .setTitle(message)
             .setView(input)
@@ -1209,19 +1234,22 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    // نکته امنیتی: در نسخه حرفه‌ای باید از PBKDF2/Argon2 با salt استفاده شود
     private fun hashPin(pin: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
         return digest.digest(pin.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
     }
 
+    // ===================================================================
+    // چرخه حیات
+    // ===================================================================
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-
         when (requestCode) {
             AUDIO_PERMISSION_CODE -> {
                 if (grantResults.isNotEmpty() &&
@@ -1250,6 +1278,9 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
+// =====================================================================
+// BroadcastReceiver برای نمایش اعلان و زمان‌بندی تکرار
+// =====================================================================
 class ReminderReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -1279,28 +1310,37 @@ class ReminderReceiver : BroadcastReceiver() {
             notificationBuilder.setSound(soundUri)
         }
 
-        try {
-            NotificationManagerCompat.from(context).notify(noteId.hashCode(), notificationBuilder.build())
-        } catch (e: SecurityException) {
-            Log.e("Yadino", "Notification permission missing", e)
+        // چک صریح مجوز اعلان در API 33+
+        val canNotify = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+
+        if (canNotify) {
+            try {
+                NotificationManagerCompat.from(context)
+                    .notify(noteId.hashCode(), notificationBuilder.build())
+            } catch (e: SecurityException) {
+                Log.e(TAG, "Notification permission missing", e)
+            }
+        } else {
+            Log.w(TAG, "POST_NOTIFICATIONS permission not granted; skipping notification")
         }
 
+        // محاسبه زمان تکرار بعدی
         val nextTime = when (repeatMode) {
             "daily" -> System.currentTimeMillis() + 24L * 60L * 60L * 1000L
             "weekly" -> System.currentTimeMillis() + 7L * 24L * 60L * 60L * 1000L
-            "monthly" -> {
-                Calendar.getInstance().apply {
-                    timeInMillis = System.currentTimeMillis()
-                    add(Calendar.MONTH, 1)
-                }.timeInMillis
-            }
+            "monthly" -> Calendar.getInstance().apply {
+                timeInMillis = System.currentTimeMillis()
+                add(Calendar.MONTH, 1)
+            }.timeInMillis
             "interval" -> System.currentTimeMillis() + interval * 60_000L
-            "count" -> {
-                if (firedCount < repeatCount) {
-                    System.currentTimeMillis() + interval * 60_000L
-                } else {
-                    0L
-                }
+            "count" -> if (firedCount < repeatCount) {
+                System.currentTimeMillis() + interval * 60_000L
+            } else {
+                0L
             }
             else -> 0L
         }
@@ -1330,22 +1370,16 @@ class ReminderReceiver : BroadcastReceiver() {
                     !alarmManager.canScheduleExactAlarms()
                 ) {
                     alarmManager.setAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        nextTime,
-                        pendingIntent
+                        AlarmManager.RTC_WAKEUP, nextTime, pendingIntent
                     )
                 } else {
                     alarmManager.setExactAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        nextTime,
-                        pendingIntent
+                        AlarmManager.RTC_WAKEUP, nextTime, pendingIntent
                     )
                 }
             } catch (e: SecurityException) {
                 alarmManager.setAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    nextTime,
-                    pendingIntent
+                    AlarmManager.RTC_WAKEUP, nextTime, pendingIntent
                 )
             }
         }
