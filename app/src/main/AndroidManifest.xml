@@ -11,12 +11,12 @@
     <application
         android:allowBackup="false"
         android:label="یادینو"
-        android:icon="@drawable/yadino_logo"
-        android:roundIcon="@drawable/yadino_logo"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar">
         
-        <!-- 🔧 تم Splash (صفحه لودینگ) به این اکتیویتی اضافه شد -->
+        <!-- 🔧 تم Splash (صفحه لودینگ) متصل به اکتیویتی اصلی -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
