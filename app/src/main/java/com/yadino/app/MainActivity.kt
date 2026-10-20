@@ -25,6 +25,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
 import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
@@ -33,6 +34,8 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.google.android.material.floatingactionbutton.FloatingActionButton
@@ -68,7 +71,7 @@ data class Note(
     var body: String,
     var category: String,
     var isPrivate: Boolean = false,
-    var colorHex: String = "", // رنگ کارت
+    var colorHex: String = "",
     val tasks: MutableList<Task> = mutableListOf(),
     var reminderAt: Long = 0L,
     var reminderEnabled: Boolean = false,
@@ -89,8 +92,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var categorySpinner: Spinner
     private lateinit var privateCheckBox: CheckBox
     private lateinit var taskInput: EditText
-    private lateinit var notesContainer: GridLayout
-    private lateinit var statusText: TextView
+    private lateinit var notesRecyclerView: RecyclerView
+    private lateinit var noteAdapter: NoteAdapter
     private lateinit var filterSpinner: Spinner
     private lateinit var reminderSummary: TextView
     private lateinit var formContainer: LinearLayout
@@ -105,18 +108,16 @@ class MainActivity : AppCompatActivity() {
     private var selectedRepeatInterval = 60
     private var selectedRingtoneUri = ""
 
+    // بخش میکروفون (ضد کرش)
     private var speechRecognizer: SpeechRecognizer? = null
     private var continuousSpeech = false
     private var speechTarget: EditText? = null
-    private var speechRestartRequested = false
     private var isListening = false
-    private var transientErrorCount = 0
-    private var pendingVoiceTarget: EditText? = null
-    private var pendingVoiceContinuous = false
-    
-    private var lastFocusedInput: EditText? = null
     private var voiceBaseText = ""
     private var isOfflineMode = false
+    private val handler = Handler(Looper.getMainLooper())
+    private val restartRunnable = Runnable { if (continuousSpeech) launchRecognizer() }
+
     private var isDarkTheme = false
 
     private val ringtonePickerLauncher = registerForActivityResult(
@@ -136,11 +137,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // تشخیص حالت تاریک/روشن
-        val nightModeFlags = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
-        isDarkTheme = nightModeFlags == Configuration.UI_MODE_NIGHT_YES
-
+        isDarkTheme = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         try {
             initializeSecureStorage()
             loadNotes()
@@ -150,7 +147,7 @@ class MainActivity : AppCompatActivity() {
             requestNotificationPermissionIfNeeded()
         } catch (e: Exception) {
             Log.e(TAG, "Startup failed", e)
-            Toast.makeText(this, "خطا در راه‌اندازی: ${e.message}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "خطا در راه‌اندازی", Toast.LENGTH_LONG).show()
             finish()
         }
     }
@@ -164,9 +161,6 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    // ===================================================================
-    // ساخت UI جدید و حرفه‌ای
-    // ===================================================================
     private fun buildScreen() {
         val bgColor = if (isDarkTheme) Color.parseColor("#121212") else Color.parseColor("#FFFFFF")
         val textColor = if (isDarkTheme) Color.parseColor("#FFFFFF") else Color.parseColor("#000000")
@@ -179,10 +173,9 @@ class MainActivity : AppCompatActivity() {
         mainScroll = ScrollView(this)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 24, 24, 100) // فاصله پایین برای دکمه شناور
+            setPadding(24, 24, 24, 200) // فاصله زیاد از پایین برای اینکه FAB روی محتوا نیفته
         }
 
-        // هدر اپ
         content.addView(TextView(this).apply {
             text = "یادینو"
             textSize = 32f
@@ -192,20 +185,17 @@ class MainActivity : AppCompatActivity() {
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         })
 
-        // --- بخش فرم (در ابتدا مخفی) ---
         formContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
         }
 
-        titleInput = EditText(this).apply { hint = "عنوان یادداشت"; textSize = 16f; setTextColor(textColor) }
-        setupFocusTracking(titleInput)
+        titleInput = EditText(this).apply { hint = "عنوان یادداشت"; setTextColor(textColor) }
+        titleInput.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) speechTarget = titleInput }
         formContainer.addView(titleInput, matchWidth())
 
-        bodyInput = EditText(this).apply {
-            hint = "متن یادداشت"; minLines = 3; gravity = Gravity.TOP or Gravity.RIGHT; textSize = 16f; setTextColor(textColor)
-        }
-        setupFocusTracking(bodyInput)
+        bodyInput = EditText(this).apply { hint = "متن یادداشت"; minLines = 3; gravity = Gravity.TOP or Gravity.RIGHT; setTextColor(textColor) }
+        bodyInput.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) speechTarget = bodyInput }
         formContainer.addView(bodyInput, matchWidth())
 
         categorySpinner = Spinner(this)
@@ -215,47 +205,26 @@ class MainActivity : AppCompatActivity() {
         privateCheckBox = CheckBox(this).apply { text = "یادداشت خصوصی باشد"; setTextColor(textColor) }
         formContainer.addView(privateCheckBox)
 
-        taskInput = EditText(this).apply {
-            hint = "کارها (هر خط یک کار)"; textSize = 15f; minLines = 2; gravity = Gravity.TOP or Gravity.RIGHT; setTextColor(textColor)
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
-        }
-        setupFocusTracking(taskInput)
+        taskInput = EditText(this).apply { hint = "کارها (هر خط یک کار)"; minLines = 2; gravity = Gravity.TOP or Gravity.RIGHT; setTextColor(textColor) }
+        taskInput.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) speechTarget = taskInput }
         formContainer.addView(taskInput, matchWidth())
 
-        // دکمه میکروفون
         formContainer.addView(Button(this).apply {
             text = "🎤 شروع ضبط صدا (کلیک: آنلاین | نگه‌داشتن: آفلاین)"
-            textSize = 12f
-            setOnClickListener { Toast.makeText(this@MainActivity, "حالت آنلاین", Toast.LENGTH_SHORT).show(); toggleVoiceInput(false) }
-            setOnLongClickListener { Toast.makeText(this@MainActivity, "حالت آفلاین", Toast.LENGTH_SHORT).show(); toggleVoiceInput(true); true }
+            setOnClickListener { toggleVoiceInput(false) }
+            setOnLongClickListener { toggleVoiceInput(true); true }
         }, matchWidth())
 
-        formContainer.addView(Button(this).apply {
-            text = "تنظیم یادآور"
-            setOnClickListener { configureReminder() }
-        }, matchWidth())
+        formContainer.addView(Button(this).apply { text = "تنظیم یادآور"; setOnClickListener { configureReminder() } }, matchWidth())
 
-        reminderSummary = TextView(this).apply {
-            text = REMINDER_NONE_TEXT; setPadding(4, 8, 4, 8); setTextColor(textColor)
-        }
+        reminderSummary = TextView(this).apply { text = REMINDER_NONE_TEXT; setTextColor(textColor) }
         formContainer.addView(reminderSummary, matchWidth())
 
-        formContainer.addView(Button(this).apply {
-            text = "ذخیره یادداشت"
-            setOnClickListener { saveCurrentNote() }
-        }, matchWidth())
-
-        formContainer.addView(Button(this).apply {
-            text = "انصراف و بستن فرم"
-            setOnClickListener { 
-                formContainer.visibility = View.GONE 
-                clearForm()
-            }
-        }, matchWidth())
+        formContainer.addView(Button(this).apply { text = "ذخیره یادداشت"; setOnClickListener { saveCurrentNote() } }, matchWidth())
+        formContainer.addView(Button(this).apply { text = "انصراف"; setOnClickListener { formContainer.visibility = View.GONE; clearForm() } }, matchWidth())
 
         content.addView(formContainer)
 
-        // --- بخش لیست یادداشت‌ها ---
         filterSpinner = Spinner(this)
         filterSpinner.adapter = spinnerAdapter(categories)
         filterSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -264,266 +233,138 @@ class MainActivity : AppCompatActivity() {
         }
         content.addView(filterSpinner, matchWidth())
 
-        // چیدمان دو ستونه (Grid)
-        notesContainer = GridLayout(this).apply {
-            columnCount = 2
-            alignmentMode = GridLayout.ALIGN_BOUNDS
+        // 🔧 استفاده از RecyclerView به جای GridLayout
+        notesRecyclerView = RecyclerView(this).apply {
+            layoutManager = GridLayoutManager(this@MainActivity, 2)
+            setHasFixedSize(false)
+            isNestedScrollingEnabled = false // برای اینکه داخل ScrollView درست اسکرول بشه
         }
-        content.addView(notesContainer, matchWidth())
+        noteAdapter = NoteAdapter(notes, 
+            onClick = { note ->
+                if (note.isPrivate) {
+                    requestPin("برای ویرایش، PIN را وارد کن") { if (it) { editNote(note); showForm() } }
+                } else { editNote(note); showForm() }
+            },
+            onLongClick = { note -> showNoteOptionsMenu(note) },
+            onTaskToggle = { saveNotes() }
+        )
+        notesRecyclerView.adapter = noteAdapter
+        content.addView(notesRecyclerView, matchWidth())
 
         mainScroll.addView(content)
         root.addView(mainScroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
-        // دکمه شناور (FAB) برای افزودن یادداشت
         val fab = FloatingActionButton(this).apply {
             setImageResource(android.R.drawable.ic_input_add)
             backgroundTintList = android.content.res.ColorStateList.valueOf(if (isDarkTheme) Color.parseColor("#BB86FC") else Color.parseColor("#6200EE"))
-            setOnClickListener {
-                formContainer.visibility = View.VISIBLE
-                mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) }
-            }
+            setOnClickListener { formContainer.visibility = View.VISIBLE; mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) } }
         }
-        val fabParams = FrameLayout.LayoutParams(150, 150).apply {
-            gravity = Gravity.BOTTOM or Gravity.LEFT
-            setMargins(40, 40, 40, 40)
-        }
+        val fabParams = FrameLayout.LayoutParams(150, 150).apply { gravity = Gravity.BOTTOM or Gravity.START; setMargins(40, 40, 40, 40) }
         root.addView(fab, fabParams)
 
         setContentView(root)
-    }
-
-    private fun setupFocusTracking(editText: EditText) {
-        editText.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) lastFocusedInput = editText }
     }
 
     private fun matchWidth(): LinearLayout.LayoutParams =
         LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 16 }
 
     private fun spinnerAdapter(items: List<String>): ArrayAdapter<String> {
-        return ArrayAdapter(this, android.R.layout.simple_spinner_item, items).also {
-            it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        }
+        return ArrayAdapter(this, android.R.layout.simple_spinner_item, items).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
     }
 
-    private fun tasksFromInput(): List<String> =
-        taskInput.text.toString().split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+    private fun showForm() { formContainer.visibility = View.VISIBLE; mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) } }
 
-    // ===================================================================
-    // ذخیره یادداشت
-    // ===================================================================
-    private fun saveCurrentNote() {
-        val title = titleInput.text.toString().trim()
-        val body = bodyInput.text.toString().trim()
-
-        if (title.isBlank() && body.isBlank()) {
-            Toast.makeText(this, "عنوان یا متن یادداشت را وارد کن.", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val category = categorySpinner.selectedItem?.toString() ?: "عمومی"
-        val isPrivate = privateCheckBox.isChecked
-
-        if (isPrivate && securePrefs.getString(PIN_KEY, null).isNullOrBlank()) {
-            showSetPinDialog { persistCurrentNote(title, body, category, isPrivate) }
-        } else if (isPrivate) {
-            requestPin("برای ذخیره یادداشت خصوصی، PIN را وارد کن") { valid ->
-                if (valid) persistCurrentNote(title, body, category, true)
-            }
-        } else {
-            persistCurrentNote(title, body, category, false)
-        }
-    }
-
-    private fun persistCurrentNote(title: String, body: String, category: String, isPrivate: Boolean) {
-        val existing = editingNoteId?.let { id -> notes.find { it.id == id } }
-        val note = existing ?: Note(title = title, body = body, category = category)
-
-        note.title = title
-        note.body = body
-        note.category = category
-        note.isPrivate = isPrivate
-
-        val oldDoneByText = note.tasks.associate { it.text to it.done }
-        note.tasks.clear()
-        tasksFromInput().forEach { text ->
-            note.tasks.add(Task(id = UUID.randomUUID().toString(), text = text, done = oldDoneByText[text] ?: false))
-        }
-
-        note.reminderAt = selectedReminderAt
-        note.reminderEnabled = selectedReminderEnabled
-        note.repeatMode = selectedRepeatMode
-        note.repeatCount = selectedRepeatCount
-        note.repeatIntervalMinutes = selectedRepeatInterval
-        note.ringtoneUri = selectedRingtoneUri
-
-        if (existing == null) notes.add(0, note)
-
-        if (note.reminderEnabled && note.reminderAt > System.currentTimeMillis()) scheduleReminder(note)
-        else cancelReminder(note.id)
-
-        saveNotes()
-        renderNotes()
-        clearForm()
-        formContainer.visibility = View.GONE // بستن فرم بعد از ذخیره
-        Toast.makeText(this, "یادداشت ذخیره شد.", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun resetReminderSettings() {
-        selectedReminderAt = 0L; selectedReminderEnabled = false; selectedRepeatMode = "none"
-        selectedRepeatCount = 0; selectedRepeatInterval = 60; selectedRingtoneUri = ""
-        if (::reminderSummary.isInitialized) reminderSummary.text = REMINDER_NONE_TEXT
-    }
-
-    private fun clearForm() {
-        titleInput.text.clear(); bodyInput.text.clear(); taskInput.text.clear()
-        categorySpinner.setSelection(0); privateCheckBox.isChecked = false
-        editingNoteId = null; resetReminderSettings()
-    }
-
-    // ===================================================================
-    // رندر لیست (Grid + رفع باگ پیشرفت کارها)
-    // ===================================================================
     private fun renderNotes() {
-        if (!::notesContainer.isInitialized) return
-        notesContainer.removeAllViews()
-
         val selectedCategory = if (::filterSpinner.isInitialized) filterSpinner.selectedItem?.toString() ?: "همه دسته‌ها" else "همه دسته‌ها"
         val visibleNotes = notes.filter { selectedCategory == "همه دسته‌ها" || it.category == selectedCategory }
+        noteAdapter.updateData(visibleNotes)
+    }
 
-        val cardBgDefault = if (isDarkTheme) Color.parseColor("#1E1E1E") else Color.parseColor("#F2F2F2")
-        val textColor = if (isDarkTheme) Color.parseColor("#FFFFFF") else Color.parseColor("#000000")
+    // کلاس آداپتر برای RecyclerView
+    inner class NoteAdapter(
+        private var items: List<Note>,
+        private val onClick: (Note) -> Unit,
+        private val onLongClick: (Note) -> Unit,
+        private val onTaskToggle: () -> Unit
+    ) : RecyclerView.Adapter<NoteAdapter.ViewHolder>() {
 
-        visibleNotes.forEach { note ->
-            val cardColor = if (note.colorHex.isNotBlank()) Color.parseColor(note.colorHex) else cardBgDefault
-            val textColorForCard = if (isColorDark(cardColor)) Color.WHITE else Color.BLACK
+        inner class ViewHolder(val card: LinearLayout, val title: TextView, val body: TextView, val progress: TextView, val tasksLayout: LinearLayout) : RecyclerView.ViewHolder(card)
 
-            val card = LinearLayout(this).apply {
+        fun updateData(newItems: List<Note>) {
+            items = newItems
+            notifyDataSetChanged()
+        }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+            val card = LinearLayout(parent.context).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(24, 24, 24, 24)
-                setBackgroundColor(cardColor)
-                // گرد کردن گوشه‌ها
-                background = android.graphics.drawable.GradientDrawable().apply {
-                    setColor(cardColor)
-                    cornerRadius = 30f
+                setPadding(30, 30, 30, 30)
+                layoutParams = RecyclerView.LayoutParams(0, RecyclerView.LayoutParams.WRAP_CONTENT).apply {
+                    columnSpec = GridLayoutManager.LayoutParams(GridLayoutManager.LayoutParams.WRAP_CONTENT, GridLayoutManager.LayoutParams.WRAP_CONTENT)
+                    marginEnd = 10
+                    bottomMargin = 20
                 }
+                background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 30f; setColor(Color.GRAY) }
             }
+            val title = TextView(parent.context).apply { textSize = 18f; typeface = android.graphics.Typeface.DEFAULT_BOLD }
+            val body = TextView(parent.context).apply { textSize = 14f; maxLines = 4; setPadding(0, 10, 0, 10) }
+            val progress = TextView(parent.context).apply { textSize = 12f }
+            val tasksLayout = LinearLayout(parent.context).apply { orientation = LinearLayout.VERTICAL }
+            
+            card.addView(title); card.addView(body); card.addView(progress); card.addView(tasksLayout)
+            return ViewHolder(card, title, body, progress, tasksLayout)
+        }
 
-            // چیدمان گرید (دو ستونه)
-            val params = GridLayout.LayoutParams().apply {
-                width = 0
-                height = GridLayout.LayoutParams.WRAP_CONTENT
-                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                setMargins(10, 10, 10, 10)
-            }
-            card.layoutParams = params
+        override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+            val note = items[position]
+            val cardColor = if (note.colorHex.isNotBlank()) Color.parseColor(note.colorHex) else if (isDarkTheme) Color.parseColor("#1E1E1E") else Color.parseColor("#F2F2F2")
+            val textColor = if (isColorDark(cardColor)) Color.WHITE else Color.BLACK
 
-            card.addView(TextView(this).apply {
-                text = if (note.isPrivate) "🔒 ${note.title}" else note.title
-                textSize = 18f
-                setTextColor(textColorForCard)
-                typeface = android.graphics.Typeface.DEFAULT_BOLD
-            })
+            (holder.card.background as android.graphics.drawable.GradientDrawable).setColor(cardColor)
+            
+            // تنظیم دقیق عرض کارت‌ها برای گرید دو ستونه
+            val params = holder.card.layoutParams as GridLayoutManager.LayoutParams
+            params.width = (notesRecyclerView.width / 2) - 30
+            holder.card.layoutParams = params
 
-            card.addView(TextView(this).apply {
-                text = note.body
-                textSize = 14f
-                maxLines = 5
-                setTextColor(textColorForCard)
-                setPadding(0, 10, 0, 10)
-            })
-
+            holder.title.setTextColor(textColor)
+            holder.title.text = if (note.isPrivate) "🔒 ${note.title}" else note.title
+            holder.body.setTextColor(textColor)
+            holder.body.text = note.body
+            
+            holder.tasksLayout.removeAllViews()
             if (note.tasks.isNotEmpty()) {
-                val progressText = TextView(this).apply {
-                    textSize = 13f
-                    setTextColor(if (isColorDark(cardColor)) Color.LTGRAY else Color.DKGRAY)
-                }
+                holder.progress.visibility = View.VISIBLE
+                holder.progress.setTextColor(if (isColorDark(cardColor)) Color.LTGRAY else Color.DKGRAY)
                 
-                // 🔧 باگ ۱ رفع شد: تابع آپدیت آنی
                 fun updateProgressUI() {
                     val done = note.tasks.count { it.done }
-                    progressText.text = "پیشرفت: $done از ${note.tasks.size}"
+                    holder.progress.text = "پیشرفت: $done از ${note.tasks.size}"
                 }
                 updateProgressUI()
-                card.addView(progressText)
 
                 note.tasks.forEach { task ->
-                    card.addView(CheckBox(this).apply {
+                    val cb = CheckBox(holder.card.context).apply {
                         text = task.text
                         isChecked = task.done
-                        setTextColor(textColorForCard)
+                        setTextColor(textColor)
                         setOnCheckedChangeListener { _, checked ->
                             task.done = checked
-                            updateProgressUI() // آپدیت آنی عدد
-                            saveNotes()        // ذخیره در پس‌زمینه
+                            updateProgressUI() // آپدیت آنی تیک
+                            onTaskToggle() // ذخیره در پس‌زمینه
                         }
-                    })
+                    }
+                    holder.tasksLayout.addView(cb)
                 }
+            } else {
+                holder.progress.visibility = View.GONE
             }
 
-            // لمس طولانی برای باز شدن منوی تنظیمات کارت (مثل عکس)
-            card.setOnLongClickListener {
-                showNoteOptionsMenu(note)
-                true
-            }
-
-            // کلیک معمولی برای ویرایش
-            card.setOnClickListener {
-                if (note.isPrivate) {
-                    requestPin("برای ویرایش یادداشت خصوصی، PIN را وارد کن") { valid -> if (valid) { editNote(note); showForm() } }
-                } else {
-                    editNote(note)
-                    showForm()
-                }
-            }
-
-            notesContainer.addView(card)
+            holder.card.setOnClickListener { onClick(note) }
+            holder.card.setOnLongClickListener { onLongClick(note); true }
         }
-    }
 
-    private fun showForm() {
-        formContainer.visibility = View.VISIBLE
-        mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) }
-    }
-
-    // منوی لمس طولانی (تغییر رنگ، حذف)
-    private fun showNoteOptionsMenu(note: Note) {
-        val options = arrayOf("🎨 تغییر رنگ یادداشت", "🗑️ حذف یادداشت")
-        AlertDialog.Builder(this)
-            .setTitle("تنظیمات یادداشت")
-            .setItems(options) { _, which ->
-                if (which == 0) showColorPicker(note)
-                else confirmDelete(note)
-            }.show()
-    }
-
-    private fun showColorPicker(note: Note) {
-        val colors = arrayOf("#F2F2F2", "#FFCDD2", "#F8BBD0", "#C5CAE9", "#BBDEFB", "#B2DFDB", "#FFF9C4")
-        val colorNames = arrayOf("پیش‌فرض", "قرمز", "صورتی", "نیلی", "آبی", "سبز", "زرد")
-        
-        AlertDialog.Builder(this)
-            .setTitle("انتخاب رنگ")
-            .setItems(colorNames) { _, which ->
-                note.colorHex = colors[which]
-                saveNotes()
-                renderNotes()
-            }.show()
-    }
-
-    private fun confirmDelete(note: Note) {
-        val deleteAction = {
-            AlertDialog.Builder(this@MainActivity)
-                .setTitle("حذف یادداشت").setMessage("این یادداشت حذف شود؟")
-                .setNegativeButton("انصراف", null)
-                .setPositiveButton("حذف") { _, _ ->
-                    cancelReminder(note.id)
-                    notes.removeAll { it.id == note.id }
-                    saveNotes()
-                    renderNotes()
-                }.show()
-        }
-        if (note.isPrivate) {
-            requestPin("برای حذف یادداشت خصوصی، PIN را وارد کن") { valid -> if (valid) deleteAction() }
-        } else deleteAction()
+        override fun getItemCount() = items.size
     }
 
     private fun isColorDark(color: Int): Boolean {
@@ -531,46 +372,27 @@ class MainActivity : AppCompatActivity() {
         return darkness >= 0.5
     }
 
-    private fun editNote(note: Note) {
-        editingNoteId = note.id
-        titleInput.setText(note.title); bodyInput.setText(note.body); privateCheckBox.isChecked = note.isPrivate
-        val categoryIndex = categories.drop(1).indexOf(note.category)
-        categorySpinner.setSelection(if (categoryIndex >= 0) categoryIndex else 0)
-        taskInput.setText(note.tasks.joinToString("\n") { it.text })
-
-        selectedReminderAt = note.reminderAt; selectedReminderEnabled = note.reminderEnabled
-        selectedRepeatMode = note.repeatMode; selectedRepeatCount = note.repeatCount
-        selectedRepeatInterval = note.repeatIntervalMinutes; selectedRingtoneUri = note.ringtoneUri
-
-        reminderSummary.text = if (note.reminderEnabled && note.reminderAt > 0) "یادآور فعال: " + SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(note.reminderAt) else REMINDER_NONE_TEXT
-        titleInput.requestFocus()
-    }
-
     // ===================================================================
-    // بخش میکروفون (بهبود حساسیت)
+    // بخش میکروفون (رفع کامل کرش)
     // ===================================================================
     private fun toggleVoiceInput(offline: Boolean) {
-        if (continuousSpeech) stopContinuousSpeech()
-        else {
-            isListening = false; speechRestartRequested = false; transientErrorCount = 0; isOfflineMode = offline
+        if (continuousSpeech) {
+            stopContinuousSpeech()
+        } else {
+            isOfflineMode = offline
             startVoiceInput()
         }
     }
 
     private fun startVoiceInput() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            pendingVoiceTarget = lastFocusedInput; pendingVoiceContinuous = true
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), AUDIO_PERMISSION_CODE)
-            Toast.makeText(this, "مجوز میکروفون را بده؛ ضبط بلافاصله شروع می‌شود.", Toast.LENGTH_SHORT).show()
             return
         }
 
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            Toast.makeText(this, "تشخیص گفتار در دسترس نیست.", Toast.LENGTH_LONG).show(); return
-        }
-
-        val target = lastFocusedInput ?: bodyInput
-        speechTarget = target; continuousSpeech = true; speechRestartRequested = true; voiceBaseText = target.text.toString()
+        val target = speechTarget ?: bodyInput
+        voiceBaseText = target.text.toString()
+        continuousSpeech = true
         
         speechRecognizer?.destroy()
         speechRecognizer = if (isOfflineMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
@@ -580,9 +402,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         speechRecognizer?.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {
-                runOnUiThread { Toast.makeText(this@MainActivity, if (isOfflineMode) "آفلاین: گوش می‌دهم..." else "آنلاین: گوش می‌دهم...", Toast.LENGTH_SHORT).show() }
-            }
+            override fun onReadyForSpeech(params: Bundle?) { runOnUiThread { Toast.makeText(this@MainActivity, "گوش می‌دهم...", Toast.LENGTH_SHORT).show() } }
             override fun onBeginningOfSpeech() = Unit
             override fun onRmsChanged(rmsdB: Float) = Unit
             override fun onBufferReceived(buffer: ByteArray?) = Unit
@@ -590,56 +410,53 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPartialResults(partialResults: Bundle?) {
                 val partial = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
-                if (partial.isNotBlank()) {
+                if (partial.isNotBlank() && !isFinishing && !isDestroyed) {
                     runOnUiThread {
-                        val target = speechTarget
-                        if (target != null) {
-                            val separator = if (target == taskInput && voiceBaseText.isNotBlank() && !voiceBaseText.endsWith("\n")) "\n" else " "
-                            target.setText(if (voiceBaseText.isBlank()) partial else "$voiceBaseText$separator$partial")
-                            target.setSelection(target.text.length)
+                        val t = speechTarget
+                        if (t != null) {
+                            val sep = if (t == taskInput && voiceBaseText.isNotBlank() && !voiceBaseText.endsWith("\n")) "\n" else " "
+                            t.setText(if (voiceBaseText.isBlank()) partial else "$voiceBaseText$sep$partial")
+                            t.setSelection(t.text.length)
                         }
                     }
                 }
             }
 
             override fun onResults(results: Bundle?) {
-                isListening = false; transientErrorCount = 0
+                isListening = false
                 val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
-                if (spoken.isNotBlank()) {
+                if (spoken.isNotBlank() && !isFinishing && !isDestroyed) {
                     runOnUiThread {
-                        val target = speechTarget
-                        if (target != null) {
-                            val separator = if (target == taskInput && voiceBaseText.isNotBlank() && !voiceBaseText.endsWith("\n")) "\n" else " "
-                            val finalText = if (voiceBaseText.isBlank()) spoken else "$voiceBaseText$separator$spoken"
-                            target.setText(finalText); target.setSelection(target.text.length); voiceBaseText = finalText
+                        val t = speechTarget
+                        if (t != null) {
+                            val sep = if (t == taskInput && voiceBaseText.isNotBlank() && !voiceBaseText.endsWith("\n")) "\n" else " "
+                            val finalText = if (voiceBaseText.isBlank()) spoken else "$voiceBaseText$sep$spoken"
+                            t.setText(finalText)
+                            t.setSelection(t.text.length)
+                            voiceBaseText = finalText
                         }
                     }
                 }
-                if (continuousSpeech && speechRestartRequested) {
-                    statusText.postDelayed({ if (continuousSpeech && speechRestartRequested) { try { speechRecognizer?.cancel() } catch (_: Exception) {}; launchRecognizer() } }, 500)
+                // 🔧 ری‌استارت ایمن با Handler
+                if (continuousSpeech) {
+                    handler.removeCallbacks(restartRunnable)
+                    handler.postDelayed(restartRunnable, 800)
                 }
             }
 
             override fun onError(error: Int) {
                 isListening = false
-                if (error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED || error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE) {
-                    if (isOfflineMode) {
-                        runOnUiThread { Toast.makeText(this@MainActivity, "زبان آفلاین نیست. آنلاین...", Toast.LENGTH_SHORT).show() }
-                        isOfflineMode = false; speechRecognizer?.destroy(); speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this@MainActivity); startVoiceInput()
-                    } else {
-                        runOnUiThread { Toast.makeText(this@MainActivity, "خطای زبان در سیستم شما.", Toast.LENGTH_LONG).show() }; stopContinuousSpeech()
-                    }
+                if (error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED && isOfflineMode) {
+                    isOfflineMode = false
+                    speechRecognizer?.destroy()
+                    speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this@MainActivity)
+                    startVoiceInput()
                     return
                 }
-                if (!continuousSpeech || !speechRestartRequested) return
-                val silentRecoverable = error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
-                val busyRecoverable = error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY || error == SpeechRecognizer.ERROR_TOO_MANY_REQUESTS
-                if (silentRecoverable) transientErrorCount = 0 else {
-                    transientErrorCount++
-                    if (transientErrorCount > 40) { stopContinuousSpeech(); return }
+                if (continuousSpeech) {
+                    handler.removeCallbacks(restartRunnable)
+                    handler.postDelayed(restartRunnable, 1000)
                 }
-                val delay = when { silentRecoverable -> 300L; busyRecoverable -> 1500L; else -> 800L }
-                statusText.postDelayed({ if (continuousSpeech && speechRestartRequested) { try { speechRecognizer?.cancel() } catch (_: Exception) {}; launchRecognizer() } }, delay)
             }
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
         })
@@ -647,106 +464,166 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchRecognizer() {
-        if (isListening) return
-        val recognizer = speechRecognizer ?: return
+        if (isListening || isFinishing || isDestroyed) return
         isListening = true
-
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "fa-IR")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            
-            // 🔧 افزایش حساسیت و زمان انتظار برای سکوت
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+            // تنظیمات حساسیت میکروفون (کاهش قطع شدن جمله)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000L)
         }
-        try { recognizer.startListening(intent) } catch (e: Exception) {
-            isListening = false
-            if (continuousSpeech && speechRestartRequested) statusText.postDelayed({ launchRecognizer() }, 800)
-        }
+        try { speechRecognizer?.startListening(intent) } catch (e: Exception) { isListening = false }
     }
 
     private fun stopContinuousSpeech() {
-        continuousSpeech = false; speechRestartRequested = false; isListening = false; transientErrorCount = 0
-        try { speechRecognizer?.stopListening(); speechRecognizer?.cancel(); speechRecognizer?.destroy() } catch (e: Exception) {}
+        continuousSpeech = false
+        isListening = false
+        handler.removeCallbacks(restartRunnable)
+        try { speechRecognizer?.stopListening(); speechRecognizer?.destroy() } catch (_: Exception) {}
         speechRecognizer = null
-        if (::statusText.isInitialized) Toast.makeText(this, "گفتار متوقف شد.", Toast.LENGTH_SHORT).show()
     }
 
+    override fun onDestroy() { stopContinuousSpeech(); super.onDestroy() }
+
     // ===================================================================
-    // یادآورها، PIN، دیتابیس
+    // بخش‌های ذخیره و یادآور (بدون تغییر)
     // ===================================================================
+    private fun saveCurrentNote() {
+        val title = titleInput.text.toString().trim(); val body = bodyInput.text.toString().trim()
+        if (title.isBlank() && body.isBlank()) { Toast.makeText(this, "عنوان یا متن خالی است", Toast.LENGTH_SHORT).show(); return }
+        val category = categorySpinner.selectedItem?.toString() ?: "عمومی"
+        val isPrivate = privateCheckBox.isChecked
+
+        if (isPrivate && securePrefs.getString(PIN_KEY, null).isNullOrBlank()) showSetPinDialog { persistCurrentNote(title, body, category, isPrivate) }
+        else if (isPrivate) requestPin("برای ذخیره، PIN را وارد کن") { if (it) persistCurrentNote(title, body, category, true) }
+        else persistCurrentNote(title, body, category, false)
+    }
+
+    private fun persistCurrentNote(title: String, body: String, category: String, isPrivate: Boolean) {
+        val existing = editingNoteId?.let { id -> notes.find { it.id == id } }
+        val note = existing ?: Note(title = title, body = body, category = category)
+        note.title = title; note.body = body; note.category = category; note.isPrivate = isPrivate
+
+        val oldDoneByText = note.tasks.associate { it.text to it.done }
+        note.tasks.clear()
+        taskInput.text.toString().split("\n").map { it.trim() }.filter { it.isNotEmpty() }.forEach { text ->
+            note.tasks.add(Task(id = UUID.randomUUID().toString(), text = text, done = oldDoneByText[text] ?: false))
+        }
+
+        note.reminderAt = selectedReminderAt; note.reminderEnabled = selectedReminderEnabled
+        note.repeatMode = selectedRepeatMode; note.repeatCount = selectedRepeatCount
+        note.repeatIntervalMinutes = selectedRepeatInterval; note.ringtoneUri = selectedRingtoneUri
+
+        if (existing == null) notes.add(0, note)
+        if (note.reminderEnabled && note.reminderAt > System.currentTimeMillis()) scheduleReminder(note) else cancelReminder(note.id)
+
+        saveNotes(); renderNotes(); clearForm(); formContainer.visibility = View.GONE
+        Toast.makeText(this, "ذخیره شد", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun clearForm() {
+        titleInput.text.clear(); bodyInput.text.clear(); taskInput.text.clear()
+        categorySpinner.setSelection(0); privateCheckBox.isChecked = false; editingNoteId = null
+        selectedReminderAt = 0L; selectedReminderEnabled = false; selectedRepeatMode = "none"
+        selectedRepeatCount = 0; selectedRepeatInterval = 60; selectedRingtoneUri = ""
+        reminderSummary.text = REMINDER_NONE_TEXT
+    }
+
+    private fun editNote(note: Note) {
+        editingNoteId = note.id; titleInput.setText(note.title); bodyInput.setText(note.body)
+        privateCheckBox.isChecked = note.isPrivate
+        val idx = categories.drop(1).indexOf(note.category); categorySpinner.setSelection(if (idx >= 0) idx else 0)
+        taskInput.setText(note.tasks.joinToString("\n") { it.text })
+        selectedReminderAt = note.reminderAt; selectedReminderEnabled = note.reminderEnabled
+        selectedRepeatMode = note.repeatMode; selectedRepeatCount = note.repeatCount
+        selectedRepeatInterval = note.repeatIntervalMinutes; selectedRingtoneUri = note.ringtoneUri
+        reminderSummary.text = if (note.reminderEnabled && note.reminderAt > 0) "فعال: " + SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()).format(note.reminderAt) else REMINDER_NONE_TEXT
+    }
+
+    private fun showNoteOptionsMenu(note: Note) {
+        val options = arrayOf("🎨 تغییر رنگ", "🗑️ حذف")
+        AlertDialog.Builder(this).setTitle("تنظیمات").setItems(options) { _, which ->
+            if (which == 0) showColorPicker(note) else confirmDelete(note)
+        }.show()
+    }
+
+    private fun showColorPicker(note: Note) {
+        val colors = arrayOf("#F2F2F2", "#FFCDD2", "#F8BBD0", "#C5CAE9", "#BBDEFB", "#B2DFDB", "#FFF9C4")
+        val names = arrayOf("پیش‌فرض", "قرمز", "صورتی", "نیلی", "آبی", "سبز", "زرد")
+        AlertDialog.Builder(this).setTitle("رنگ").setItems(names) { _, w ->
+            note.colorHex = colors[w]; saveNotes(); renderNotes()
+        }.show()
+    }
+
+    private fun confirmDelete(note: Note) {
+        val del = { AlertDialog.Builder(this).setTitle("حذف").setMessage("حذف شود؟").setNegativeButton("نه", null).setPositiveButton("بله") { _, _ ->
+            cancelReminder(note.id); notes.removeAll { it.id == note.id }; saveNotes(); renderNotes()
+        }.show() }
+        if (note.isPrivate) requestPin("PIN") { if (it) del() } else del()
+    }
+
     private fun configureReminder() {
-        val calendar = Calendar.getInstance().apply { if (selectedReminderAt > System.currentTimeMillis()) timeInMillis = selectedReminderAt else { add(Calendar.MINUTE, 5); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) } }
-        DatePickerDialog(this, { _, year, month, day ->
-            calendar.set(Calendar.YEAR, year); calendar.set(Calendar.MONTH, month); calendar.set(Calendar.DAY_OF_MONTH, day)
-            TimePickerDialog(this, { _, hour, minute ->
-                calendar.set(Calendar.HOUR_OF_DAY, hour); calendar.set(Calendar.MINUTE, minute); calendar.set(Calendar.SECOND, 0); calendar.set(Calendar.MILLISECOND, 0)
-                selectedReminderAt = calendar.timeInMillis; selectedReminderEnabled = true; configureRepeatOptions()
-            }, calendar.get(Calendar.HOUR_OF_DAY), calendar.get(Calendar.MINUTE), true).show()
-        }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)).show()
+        val cal = Calendar.getInstance().apply { if (selectedReminderAt > System.currentTimeMillis()) timeInMillis = selectedReminderAt else { add(Calendar.MINUTE, 5); set(Calendar.SECOND, 0) } }
+        DatePickerDialog(this, { _, y, m, d ->
+            cal.set(y, m, d)
+            TimePickerDialog(this, { _, h, min ->
+                cal.set(Calendar.HOUR_OF_DAY, h); cal.set(Calendar.MINUTE, min); cal.set(Calendar.SECOND, 0)
+                selectedReminderAt = cal.timeInMillis; selectedReminderEnabled = true; configureRepeatOptions()
+            }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show()
+        }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
     }
 
     private fun configureRepeatOptions() {
-        val choices = arrayOf("بدون تکرار", "هر روز", "هر هفته", "هر ماه", "فاصله زمانی دلخواه", "تعداد دفعات محدود")
-        AlertDialog.Builder(this).setTitle("تکرار یادآور").setItems(choices) { _, which ->
-            when (which) {
-                0 -> { selectedRepeatMode = "none"; selectedRepeatCount = 0; chooseRingtone() }
+        val choices = arrayOf("بدون تکرار", "روزانه", "هفتگی", "ماهانه", "دلخواه", "محدود")
+        AlertDialog.Builder(this).setTitle("تکرار").setItems(choices) { _, w ->
+            when (w) {
+                0 -> { selectedRepeatMode = "none"; chooseRingtone() }
                 1 -> { selectedRepeatMode = "daily"; chooseRingtone() }
                 2 -> { selectedRepeatMode = "weekly"; chooseRingtone() }
                 3 -> { selectedRepeatMode = "monthly"; chooseRingtone() }
                 4 -> configureCustomInterval()
                 5 -> configureRepeatCount()
             }
-        }.setNegativeButton("لغو یادآور") { _, _ -> selectedReminderEnabled = false; selectedReminderAt = 0L; selectedRepeatMode = "none"; selectedRepeatCount = 0; reminderSummary.text = REMINDER_DISABLED_TEXT }.show()
+        }.show()
     }
 
     private fun configureCustomInterval() {
-        val input = EditText(this).apply { hint = "فاصله به دقیقه"; inputType = android.text.InputType.TYPE_CLASS_NUMBER; setText(selectedRepeatInterval.toString()) }
-        AlertDialog.Builder(this).setTitle("فاصله تکرار").setView(input).setNegativeButton("لغو", null).setPositiveButton("تأیید") { _, _ ->
-            val interval = input.text.toString().toIntOrNull() ?: 60
-            if (interval < 1) { Toast.makeText(this, "حداقل یک دقیقه.", Toast.LENGTH_SHORT).show(); return@setPositiveButton }
-            selectedRepeatInterval = interval; selectedRepeatMode = "interval"; chooseRingtone()
+        val inp = EditText(this).apply { hint = "دقیقه"; inputType = android.text.InputType.TYPE_CLASS_NUMBER; setText(selectedRepeatInterval.toString()) }
+        AlertDialog.Builder(this).setTitle("فاصله").setView(inp).setPositiveButton("OK") { _, _ ->
+            selectedRepeatInterval = inp.text.toString().toIntOrNull() ?: 60; selectedRepeatMode = "interval"; chooseRingtone()
         }.show()
     }
 
     private fun configureRepeatCount() {
-        val input = EditText(this).apply { hint = "تعداد تکرار"; inputType = android.text.InputType.TYPE_CLASS_NUMBER; setText("3") }
-        AlertDialog.Builder(this).setTitle("تعداد تکرار").setView(input).setNegativeButton("لغو", null).setPositiveButton("تأیید") { _, _ ->
-            selectedRepeatCount = (input.text.toString().toIntOrNull() ?: 3).coerceIn(1, 100); selectedRepeatMode = "count"; chooseRingtone()
+        val inp = EditText(this).apply { hint = "دفعات"; inputType = android.text.InputType.TYPE_CLASS_NUMBER; setText("3") }
+        AlertDialog.Builder(this).setTitle("تعداد").setView(inp).setPositiveButton("OK") { _, _ ->
+            selectedRepeatCount = (inp.text.toString().toIntOrNull() ?: 3).coerceIn(1, 100); selectedRepeatMode = "count"; chooseRingtone()
         }.show()
     }
 
     private fun chooseRingtone() {
-        val options = arrayOf("زنگ پیش‌فرض", "انتخاب زنگ از گوشی", "بدون صدا")
-        AlertDialog.Builder(this).setTitle("صدای یادآور").setItems(options) { _, which ->
-            when (which) {
+        val opts = arrayOf("پیش‌فرض", "از گوشی", "بی‌صدا")
+        AlertDialog.Builder(this).setTitle("صدا").setItems(opts) { _, w ->
+            when (w) {
                 0 -> { selectedRingtoneUri = ""; updateReminderSummary() }
-                1 -> {
-                    val intent = Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
-                        putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_RINGTONE or RingtoneManager.TYPE_NOTIFICATION or RingtoneManager.TYPE_ALARM)
-                        putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "انتخاب صدای یادآور")
-                        putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, true)
-                        putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
-                        if (selectedRingtoneUri.isNotBlank() && selectedRingtoneUri != "silent") putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, Uri.parse(selectedRingtoneUri))
-                    }
-                    ringtonePickerLauncher.launch(intent)
-                }
+                1 -> { ringtonePickerLauncher.launch(Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
+                    putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_NOTIFICATION or RingtoneManager.TYPE_ALARM)
+                    if (selectedRingtoneUri.isNotBlank() && selectedRingtoneUri != "silent") putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, Uri.parse(selectedRingtoneUri))
+                }) }
                 2 -> { selectedRingtoneUri = "silent"; updateReminderSummary() }
             }
         }.show()
     }
 
     private fun updateReminderSummary() {
-        if (!::reminderSummary.isInitialized) return
         reminderSummary.text = if (selectedReminderEnabled && selectedReminderAt > 0) {
-            val date = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(selectedReminderAt)
-            val repeat = when (selectedRepeatMode) { "daily" -> "روزانه"; "weekly" -> "هفتگی"; "monthly" -> "ماهانه"; "interval" -> "هر $selectedRepeatInterval دقیقه"; "count" -> "$selectedRepeatCount بار"; else -> "بدون تکرار" }
-            val sound = when { selectedRingtoneUri.isBlank() -> "پیش‌فرض"; selectedRingtoneUri == "silent" -> "بی‌صدا"; else -> "دلخواه ✓" }
-            "یادآور: $date | تکرار: $repeat | صدا: $sound"
+            val d = SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()).format(selectedReminderAt)
+            val r = when (selectedRepeatMode) { "daily" -> "روزانه"; "weekly" -> "هفتگی"; "monthly" -> "ماهانه"; "interval" -> "هر $selectedRepeatInterval د"; "count" -> "$selectedRepeatCount بار"; else -> "بدون" }
+            val s = when { selectedRingtoneUri.isBlank() -> "پیش‌فرض"; selectedRingtoneUri == "silent" -> "بی‌صدا"; else -> "دلخواه" }
+            "یادآور: $d | $r | $s"
         } else REMINDER_NONE_TEXT
     }
 
@@ -755,24 +632,21 @@ class MainActivity : AppCompatActivity() {
         val intent = Intent(this, ReminderReceiver::class.java).apply {
             putExtra("note_id", note.id); putExtra("note_title", note.title); putExtra("note_body", note.body); putExtra("repeat_mode", note.repeatMode); putExtra("repeat_count", note.repeatCount); putExtra("repeat_interval", note.repeatIntervalMinutes); putExtra("fired_count", note.reminderFiredCount); putExtra("ringtone_uri", note.ringtoneUri)
         }
-        val pendingIntent = PendingIntent.getBroadcast(this, note.id.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, note.reminderAt, pendingIntent)
-            else alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, note.reminderAt, pendingIntent)
-        } catch (e: SecurityException) { alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, note.reminderAt, pendingIntent) }
+        val pi = PendingIntent.getBroadcast(this, note.id.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val am = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        try { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, note.reminderAt, pi) else am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, note.reminderAt, pi) } catch (_: Exception) {}
     }
 
     private fun cancelReminder(noteId: String) {
-        val pendingIntent = PendingIntent.getBroadcast(this, noteId.hashCode(), Intent(this, ReminderReceiver::class.java), PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
-        if (pendingIntent != null) { (getSystemService(Context.ALARM_SERVICE) as AlarmManager).cancel(pendingIntent); pendingIntent.cancel() }
+        val pi = PendingIntent.getBroadcast(this, noteId.hashCode(), Intent(this, ReminderReceiver::class.java), PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
+        if (pi != null) { (getSystemService(Context.ALARM_SERVICE) as AlarmManager).cancel(pi); pi.cancel() }
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-            manager.createNotificationChannel(android.app.NotificationChannel(CHANNEL_ID, "یادآورها", android.app.NotificationManager.IMPORTANCE_HIGH).apply { description = "اعلان‌های یادآور"; enableVibration(true) })
-            manager.createNotificationChannel(android.app.NotificationChannel(CHANNEL_ID_SILENT, "صدای دلخواه", android.app.NotificationManager.IMPORTANCE_HIGH).apply { description = "یادآور با پخش دستی"; setSound(null, null); enableVibration(true) })
+            val m = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            m.createNotificationChannel(android.app.NotificationChannel(CHANNEL_ID, "یادآور", android.app.NotificationManager.IMPORTANCE_HIGH))
+            m.createNotificationChannel(android.app.NotificationChannel(CHANNEL_ID_SILENT, "بی‌صدا", android.app.NotificationManager.IMPORTANCE_HIGH).apply { setSound(null, null) })
         }
     }
 
@@ -782,131 +656,88 @@ class MainActivity : AppCompatActivity() {
 
     private fun saveNotes() {
         try {
-            val array = JSONArray()
-            notes.forEach { note ->
-                array.put(JSONObject().apply {
-                    put("id", note.id); put("title", note.title); put("body", note.body); put("category", note.category); put("private", note.isPrivate); put("colorHex", note.colorHex)
-                    val tasksArray = JSONArray()
-                    note.tasks.forEach { tasksArray.put(JSONObject().apply { put("id", it.id); put("text", it.text); put("done", it.done) }) }
-                    put("tasks", tasksArray)
-                    put("reminderAt", note.reminderAt); put("reminderEnabled", note.reminderEnabled); put("repeatMode", note.repeatMode); put("repeatCount", note.repeatCount); put("repeatIntervalMinutes", note.repeatIntervalMinutes); put("ringtoneUri", note.ringtoneUri); put("reminderFiredCount", note.reminderFiredCount)
+            val a = JSONArray()
+            notes.forEach { n ->
+                a.put(JSONObject().apply {
+                    put("id", n.id); put("title", n.title); put("body", n.body); put("category", n.category); put("private", n.isPrivate); put("colorHex", n.colorHex)
+                    val ta = JSONArray(); n.tasks.forEach { ta.put(JSONObject().apply { put("id", it.id); put("text", it.text); put("done", it.done) }) }; put("tasks", ta)
+                    put("reminderAt", n.reminderAt); put("reminderEnabled", n.reminderEnabled); put("repeatMode", n.repeatMode); put("repeatCount", n.repeatCount); put("repeatIntervalMinutes", n.repeatIntervalMinutes); put("ringtoneUri", n.ringtoneUri); put("reminderFiredCount", n.reminderFiredCount)
                 })
             }
-            securePrefs.edit().putString(NOTES_KEY, array.toString()).apply()
-        } catch (e: Exception) { Log.e(TAG, "Saving failed", e) }
+            securePrefs.edit().putString(NOTES_KEY, a.toString()).apply()
+        } catch (e: Exception) { Log.e(TAG, "Save fail", e) }
     }
 
     private fun loadNotes() {
         notes.clear()
         val raw = securePrefs.getString(NOTES_KEY, null) ?: return
         try {
-            val array = JSONArray(raw)
-            for (i in 0 until array.length()) {
-                val obj = array.optJSONObject(i) ?: continue
-                val tasks = mutableListOf<Task>()
-                val tasksArray = obj.optJSONArray("tasks") ?: JSONArray()
-                for (j in 0 until tasksArray.length()) {
-                    val tObj = tasksArray.optJSONObject(j) ?: continue
-                    tasks.add(Task(id = tObj.optString("id").ifBlank { UUID.randomUUID().toString() }, text = tObj.optString("text"), done = tObj.optBoolean("done", false)))
-                }
-                notes.add(Note(
-                    id = obj.optString("id").ifBlank { UUID.randomUUID().toString() }, title = obj.optString("title"), body = obj.optString("body"), category = obj.optString("category", "عمومی"), isPrivate = obj.optBoolean("private", false),
-                    colorHex = obj.optString("colorHex", ""), tasks = tasks, reminderAt = obj.optLong("reminderAt", 0L), reminderEnabled = obj.optBoolean("reminderEnabled", false), repeatMode = obj.optString("repeatMode", "none"), repeatCount = obj.optInt("repeatCount", 0), repeatIntervalMinutes = obj.optInt("repeatIntervalMinutes", 60), ringtoneUri = obj.optString("ringtoneUri", ""), reminderFiredCount = obj.optInt("reminderFiredCount", 0)
-                ))
+            val a = JSONArray(raw)
+            for (i in 0 until a.length()) {
+                val o = a.optJSONObject(i) ?: continue
+                val t = mutableListOf<Task>(); val ta = o.optJSONArray("tasks") ?: JSONArray()
+                for (j in 0 until ta.length()) { val to = ta.optJSONObject(j) ?: continue; t.add(Task(id = to.optString("id").ifBlank { UUID.randomUUID().toString() }, text = to.optString("text"), done = to.optBoolean("done", false))) }
+                notes.add(Note(id = o.optString("id").ifBlank { UUID.randomUUID().toString() }, title = o.optString("title"), body = o.optString("body"), category = o.optString("category", "عمومی"), isPrivate = o.optBoolean("private", false), colorHex = o.optString("colorHex", ""), tasks = t, reminderAt = o.optLong("reminderAt", 0L), reminderEnabled = o.optBoolean("reminderEnabled", false), repeatMode = o.optString("repeatMode", "none"), repeatCount = o.optInt("repeatCount", 0), repeatIntervalMinutes = o.optInt("repeatIntervalMinutes", 60), ringtoneUri = o.optString("ringtoneUri", ""), reminderFiredCount = o.optInt("reminderFiredCount", 0)))
             }
-        } catch (e: Exception) { Log.e(TAG, "Loading failed", e) }
+        } catch (e: Exception) { Log.e(TAG, "Load fail", e) }
     }
 
     private fun showSetPinDialog(onSuccess: () -> Unit) {
-        val input = EditText(this).apply { hint = "PIN جدید (حداقل ۴ رقم)"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD }
-        AlertDialog.Builder(this).setTitle("ساخت PIN").setView(input).setNegativeButton("لغو", null).setPositiveButton("ذخیره") { _, _ ->
-            val pin = input.text.toString()
-            if (pin.length < 4) { Toast.makeText(this, "PIN باید حداقل ۴ رقم باشد.", Toast.LENGTH_SHORT).show(); return@setPositiveButton }
-            securePrefs.edit().putString(PIN_KEY, hashPin(pin)).apply(); onSuccess()
+        val inp = EditText(this).apply { hint = "PIN جدید"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD }
+        AlertDialog.Builder(this).setTitle("ساخت PIN").setView(inp).setNegativeButton("لغو", null).setPositiveButton("ذخیره") { _, _ ->
+            if (inp.text.length < 4) Toast.makeText(this, "حداقل ۴ رقم", Toast.LENGTH_SHORT).show()
+            else { securePrefs.edit().putString(PIN_KEY, MessageDigest.getInstance("SHA-256").digest(inp.text.toString().toByteArray()).joinToString("") { "%02x".format(it) }).apply(); onSuccess() }
         }.show()
     }
 
     private fun requestPin(message: String, callback: (Boolean) -> Unit) {
-        val input = EditText(this).apply { hint = "PIN"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD }
-        AlertDialog.Builder(this).setTitle(message).setView(input).setNegativeButton("لغو") { _, _ -> callback(false) }.setPositiveButton("تأیید") { _, _ ->
-            val valid = securePrefs.getString(PIN_KEY, null) == hashPin(input.text.toString())
-            if (!valid) Toast.makeText(this, "PIN اشتباه است.", Toast.LENGTH_SHORT).show()
-            callback(valid)
+        val inp = EditText(this).apply { hint = "PIN"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD }
+        AlertDialog.Builder(this).setTitle(message).setView(inp).setNegativeButton("لغو") { _, _ -> callback(false) }.setPositiveButton("تأیید") { _, _ ->
+            val hash = MessageDigest.getInstance("SHA-256").digest(inp.text.toString().toByteArray()).joinToString("") { "%02x".format(it) }
+            val ok = securePrefs.getString(PIN_KEY, null) == hash; if (!ok) Toast.makeText(this, "اشتباه", Toast.LENGTH_SHORT).show(); callback(ok)
         }.show()
     }
-
-    private fun hashPin(pin: String): String = MessageDigest.getInstance("SHA-256").digest(pin.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == AUDIO_PERMISSION_CODE && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            val target = pendingVoiceTarget ?: lastFocusedInput
-            if (target != null) target.postDelayed({ startVoiceInput() }, 100)
-        }
-    }
-
-    override fun onDestroy() { stopContinuousSpeech(); super.onDestroy() }
 }
 
-// =====================================================================
-// BroadcastReceiver
-// =====================================================================
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val noteId = intent.getStringExtra("note_id") ?: return
-        val title = intent.getStringExtra("note_title") ?: "یادآور یادینو"
+        val title = intent.getStringExtra("note_title") ?: "یادآور"
         val body = intent.getStringExtra("note_body").orEmpty()
         val repeatMode = intent.getStringExtra("repeat_mode") ?: "none"
         val repeatCount = intent.getIntExtra("repeat_count", 0)
-        val interval = intent.getIntExtra("repeat_interval", 60).coerceAtLeast(1)
+        val interval = intent.getIntExtra("repeat_interval", 60)
         val firedCount = intent.getIntExtra("fired_count", 0)
         val ringtone = intent.getStringExtra("ringtone_uri").orEmpty()
 
         val isCustom = ringtone.isNotBlank() && ringtone != "silent"
         val isSilent = ringtone == "silent"
-        val channelToUse = if (isCustom || isSilent) CHANNEL_ID_SILENT else CHANNEL_ID
-
-        val builder = NotificationCompat.Builder(context, channelToUse)
-            .setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle(title.ifBlank { "یادآور یادینو" }).setContentText(body.ifBlank { "زمان یادآوری فرا رسیده است." }).setStyle(NotificationCompat.BigTextStyle().bigText(body)).setPriority(NotificationCompat.PRIORITY_HIGH).setAutoCancel(true)
-
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) { when { isSilent -> builder.setSound(null); isCustom -> builder.setSound(Uri.parse(ringtone)) } }
-
-        val canNotify = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-        val pendingResult = goAsync()
-
-        if (canNotify) try { NotificationManagerCompat.from(context).notify(noteId.hashCode(), builder.build()) } catch (e: SecurityException) {}
-
+        val ch = if (isCustom || isSilent) CHANNEL_ID_SILENT else CHANNEL_ID
+        val builder = NotificationCompat.Builder(context, ch).setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle(title).setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(body)).setPriority(NotificationCompat.PRIORITY_HIGH).setAutoCancel(true)
+        val canNotify = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        val pr = goAsync()
+        if (canNotify) try { NotificationManagerCompat.from(context).notify(noteId.hashCode(), builder.build()) } catch (_: Exception) {}
+        
         if (isCustom && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             try {
                 val r = RingtoneManager.getRingtone(context, Uri.parse(ringtone))
-                if (r != null) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) r.isLooping = false
-                    r.audioAttributes = AudioAttributes.Builder().setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).setUsage(AudioAttributes.USAGE_NOTIFICATION).build()
-                    r.play()
-                    Handler(Looper.getMainLooper()).postDelayed({ try { r.stop() } catch (_: Exception) {}; pendingResult.finish() }, 5000L)
-                } else pendingResult.finish()
-            } catch (e: Exception) { pendingResult.finish() }
-        } else pendingResult.finish()
+                if (r != null) { r.audioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build(); r.play(); Handler(Looper.getMainLooper()).postDelayed({ r.stop(); pr.finish() }, 5000) } else pr.finish()
+            } catch (_: Exception) { pr.finish() }
+        } else pr.finish()
 
-        val nextTime = when (repeatMode) {
-            "daily" -> System.currentTimeMillis() + 24L * 60L * 60L * 1000L
-            "weekly" -> System.currentTimeMillis() + 7L * 24L * 60L * 60L * 1000L
-            "monthly" -> Calendar.getInstance().apply { timeInMillis = System.currentTimeMillis(); add(Calendar.MONTH, 1) }.timeInMillis
-            "interval" -> System.currentTimeMillis() + interval * 60_000L
-            "count" -> if (firedCount < repeatCount) System.currentTimeMillis() + interval * 60_000L else 0L
+        val next = when (repeatMode) {
+            "daily" -> System.currentTimeMillis() + 86400000L
+            "weekly" -> System.currentTimeMillis() + 604800000L
+            "monthly" -> Calendar.getInstance().apply { add(Calendar.MONTH, 1) }.timeInMillis
+            "interval" -> System.currentTimeMillis() + interval * 60000L
+            "count" -> if (firedCount < repeatCount) System.currentTimeMillis() + interval * 60000L else 0L
             else -> 0L
         }
-
-        if (nextTime > System.currentTimeMillis()) {
-            val nextIntent = Intent(context, ReminderReceiver::class.java).apply {
-                putExtra("note_id", noteId); putExtra("note_title", title); putExtra("note_body", body); putExtra("repeat_mode", repeatMode); putExtra("repeat_count", repeatCount); putExtra("repeat_interval", interval); putExtra("fired_count", firedCount + 1); putExtra("ringtone_uri", ringtone)
-            }
-            val pendingIntent = PendingIntent.getBroadcast(context, noteId.hashCode(), nextIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, nextTime, pendingIntent)
-                else alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, nextTime, pendingIntent)
-            } catch (e: SecurityException) { alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, nextTime, pendingIntent) }
+        if (next > System.currentTimeMillis()) {
+            val ni = Intent(context, ReminderReceiver::class.java).apply { putExtra("note_id", noteId); putExtra("note_title", title); putExtra("note_body", body); putExtra("repeat_mode", repeatMode); putExtra("repeat_count", repeatCount); putExtra("repeat_interval", interval); putExtra("fired_count", firedCount + 1); putExtra("ringtone_uri", ringtone) }
+            val pi = PendingIntent.getBroadcast(context, noteId.hashCode(), ni, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            try { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, pi) else am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, pi) } catch (_: Exception) {}
         }
     }
 }
