@@ -114,7 +114,6 @@ class MainActivity : AppCompatActivity() {
     private var pendingVoiceTarget: EditText? = null
     private var pendingVoiceContinuous = false
 
-    // ثبت Launcher قبل از onCreate — روش استاندارد
     private val ringtonePickerLauncher =
         registerForActivityResult(
             androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
@@ -131,7 +130,6 @@ class MainActivity : AppCompatActivity() {
                         RingtoneManager.EXTRA_RINGTONE_PICKED_URI
                     )
                 }
-                // طبق مستندات اندروید: اگر کاربر «Silent» را انتخاب کند، uri برابر null برمی‌گردد
                 selectedRingtoneUri = if (uri == null) "silent" else uri.toString()
                 Log.d(TAG, "Ringtone selected: $selectedRingtoneUri")
             }
@@ -219,7 +217,6 @@ class MainActivity : AppCompatActivity() {
         }
         content.addView(privateCheckBox)
 
-        // 🔧 باگ ۲: taskInput به یک فیلد چندخطی تبدیل شد
         taskInput = EditText(this).apply {
             hint = "کارها (هر خط یک کار)"
             textSize = 15f
@@ -237,7 +234,6 @@ class MainActivity : AppCompatActivity() {
         voiceRow.addView(
             Button(this).apply {
                 text = "ورود صوتی عنوان"
-                // 🔧 باگ ۳: حالا پیوسته است
                 setOnClickListener { toggleVoiceInput(titleInput, continuous = true) }
             },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -383,7 +379,6 @@ class MainActivity : AppCompatActivity() {
         note.category = category
         note.isPrivate = isPrivate
 
-        // 🔧 باگ ۲: تسک‌ها از taskInput خوانده می‌شوند
         val oldDoneByText = note.tasks.associate { it.text to it.done }
         note.tasks.clear()
         tasksFromInput().forEach { text ->
@@ -598,7 +593,6 @@ class MainActivity : AppCompatActivity() {
         val categoryIndex = categories.drop(1).indexOf(note.category)
         categorySpinner.setSelection(if (categoryIndex >= 0) categoryIndex else 0)
 
-        // 🔧 باگ ۲: تسک‌ها به صورت خط‌به‌خط داخل taskInput می‌روند
         taskInput.setText(note.tasks.joinToString("\n") { it.text })
 
         selectedReminderAt = note.reminderAt
@@ -739,7 +733,6 @@ class MainActivity : AppCompatActivity() {
                     0 -> { selectedRingtoneUri = ""; updateReminderSummary() }
                     1 -> {
                         val intent = Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
-                            // 🔧 باگ ۱: همه انواع صدا نمایش داده شود تا کاربر بتواند زنگ دلخواه پیدا کند
                             putExtra(
                                 RingtoneManager.EXTRA_RINGTONE_TYPE,
                                 RingtoneManager.TYPE_RINGTONE or
@@ -749,7 +742,6 @@ class MainActivity : AppCompatActivity() {
                             putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "انتخاب صدای یادآور")
                             putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, true)
                             putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
-                            // 🔧 باگ ۱: انتخاب فعلی را از قبل هایلایت کن
                             if (selectedRingtoneUri.isNotBlank() &&
                                 selectedRingtoneUri != "silent"
                             ) {
@@ -781,7 +773,6 @@ class MainActivity : AppCompatActivity() {
                 "count" -> "$selectedRepeatCount بار"
                 else -> "بدون تکرار"
             }
-            // 🔧 باگ ۱: نمایش صدا در خلاصه تا کاربر مطمئن شود ذخیره شده
             val sound = when {
                 selectedRingtoneUri.isBlank() -> "زنگ پیش‌فرض"
                 selectedRingtoneUri == "silent" -> "بدون صدا"
@@ -851,14 +842,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ===================================================================
-    // کانال‌های اعلان (🔧 باگ ۱)
+    // کانال‌های اعلان
     // ===================================================================
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE)
                 as android.app.NotificationManager
 
-            // کانال عادی — صدای پیش‌فرض سیستم
             val normalChannel = android.app.NotificationChannel(
                 CHANNEL_ID,
                 "یادآورهای یادینو",
@@ -869,7 +859,6 @@ class MainActivity : AppCompatActivity() {
             }
             manager.createNotificationChannel(normalChannel)
 
-            // کانال بی‌صدا — برای صدای دلخواه و حالت «بدون صدا»
             val silentChannel = android.app.NotificationChannel(
                 CHANNEL_ID_SILENT,
                 "یادآورهای یادینو (صدای دلخواه / بی‌صدا)",
@@ -899,12 +888,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ===================================================================
-    // ورودی صوتی (🔧 باگ ۳)
+    // ورودی صوتی
     // ===================================================================
     private fun toggleVoiceInput(target: EditText, continuous: Boolean) {
         if (continuousSpeech) {
             stopContinuousSpeech()
         } else {
+            isListening = false
+            speechRestartRequested = false
+            transientErrorCount = 0
             startVoiceInput(target, continuous)
         }
     }
@@ -915,7 +907,6 @@ class MainActivity : AppCompatActivity() {
                 Manifest.permission.RECORD_AUDIO
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            // ذخیره درخواست و بعد از صدور مجوز به‌طور خودکار شروع کن
             pendingVoiceTarget = target
             pendingVoiceContinuous = continuous
             ActivityCompat.requestPermissions(
@@ -972,54 +963,78 @@ class MainActivity : AppCompatActivity() {
 
             override fun onError(error: Int) {
                 isListening = false
+                Log.d(TAG, "Speech error: $error")
 
                 if (!continuousSpeech || !speechRestartRequested) {
-                    statusText.text = "تشخیص گفتار پایان یافت."
+                    if (::statusText.isInitialized) {
+                        statusText.text = "تشخیص گفتار پایان یافت."
+                    }
                     return
                 }
 
-                // 🔧 باگ ۳: خطاهای سکوت و busy را بی‌نهایت retry کن
-                val infiniteRetry = error == SpeechRecognizer.ERROR_NO_MATCH ||
-                    error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
-                    error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
+                val silentRecoverable = error == SpeechRecognizer.ERROR_NO_MATCH ||
+                    error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
 
-                val transient = error in listOf(
-                    SpeechRecognizer.ERROR_CLIENT,
-                    SpeechRecognizer.ERROR_AUDIO,
-                    SpeechRecognizer.ERROR_SERVER,
-                    SpeechRecognizer.ERROR_NETWORK,
-                    SpeechRecognizer.ERROR_NETWORK_TIMEOUT
-                )
+                val busyRecoverable = error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
+                    error == SpeechRecognizer.ERROR_TOO_MANY_REQUESTS
 
-                if (!infiniteRetry && !transient) {
-                    // خطای غیرقابل جبران (مجوز، زبان)
+                val transientRecoverable = error == SpeechRecognizer.ERROR_CLIENT ||
+                    error == SpeechRecognizer.ERROR_AUDIO ||
+                    error == SpeechRecognizer.ERROR_SERVER ||
+                    error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED ||
+                    error == SpeechRecognizer.ERROR_NETWORK ||
+                    error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT
+
+                val fatal = error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ||
+                    error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED ||
+                    error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE ||
+                    error == SpeechRecognizer.ERROR_CANNOT_CHECK_SUPPORT
+
+                if (fatal) {
                     Log.e(TAG, "Fatal speech error: $error")
+                    Toast.makeText(
+                        this@MainActivity,
+                        "خطای غیرقابل جبران در تشخیص گفتار (کد $error)",
+                        Toast.LENGTH_LONG
+                    ).show()
                     stopContinuousSpeech()
                     return
                 }
 
-                if (transient && !infiniteRetry) {
+                if (silentRecoverable) {
+                    transientErrorCount = 0
+                } else {
                     transientErrorCount++
-                    if (transientErrorCount > 20) {
+                    if (transientErrorCount > 40) {
+                        Log.w(TAG, "Too many retries, stopping")
+                        Toast.makeText(
+                            this@MainActivity,
+                            "تشخیص گفتار پیوسته پس از چند تلاش متوقف شد.",
+                            Toast.LENGTH_SHORT
+                        ).show()
                         stopContinuousSpeech()
                         return
                     }
                 }
 
-                val delay = when (error) {
-                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 800L
-                    SpeechRecognizer.ERROR_NO_MATCH,
-                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> 250L
-                    else -> 500L
+                val delay = when {
+                    silentRecoverable -> 300L
+                    busyRecoverable -> 1500L
+                    else -> 800L
                 }
 
                 statusText.postDelayed({
-                    if (continuousSpeech && speechRestartRequested) launchRecognizer()
+                    if (continuousSpeech && speechRestartRequested) {
+                        try { speechRecognizer?.cancel() } catch (_: Exception) {}
+                        launchRecognizer()
+                    }
                 }, delay)
             }
 
             override fun onResults(results: Bundle?) {
                 isListening = false
+                transientErrorCount = 0
+
                 val spoken = results
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()
@@ -1040,10 +1055,15 @@ class MainActivity : AppCompatActivity() {
 
                 if (continuousSpeech && speechRestartRequested) {
                     statusText.postDelayed({
-                        if (continuousSpeech && speechRestartRequested) launchRecognizer()
-                    }, 300)
+                        if (continuousSpeech && speechRestartRequested) {
+                            try { speechRecognizer?.cancel() } catch (_: Exception) {}
+                            launchRecognizer()
+                        }
+                    }, 500)
                 } else {
-                    statusText.text = "تشخیص گفتار پایان یافت."
+                    if (::statusText.isInitialized) {
+                        statusText.text = "تشخیص گفتار پایان یافت."
+                    }
                 }
             }
 
@@ -1066,6 +1086,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun launchRecognizer() {
         if (isListening) return
+        val recognizer = speechRecognizer ?: return
         isListening = true
 
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -1080,14 +1101,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         try {
-            speechRecognizer?.startListening(intent)
+            recognizer.startListening(intent)
         } catch (e: Exception) {
             Log.e(TAG, "startListening failed", e)
             isListening = false
             if (continuousSpeech && speechRestartRequested) {
                 statusText.postDelayed({
                     if (continuousSpeech && speechRestartRequested) launchRecognizer()
-                }, 500)
+                }, 800)
             }
         }
     }
@@ -1257,7 +1278,6 @@ class MainActivity : AppCompatActivity() {
                 val granted = grantResults.isNotEmpty() &&
                     grantResults[0] == PackageManager.PERMISSION_GRANTED
                 if (granted) {
-                    // 🔧 باگ ۳: شروع خودکار ضبط بعد از صدور مجوز
                     val target = pendingVoiceTarget
                     val cont = pendingVoiceContinuous
                     pendingVoiceTarget = null
@@ -1294,7 +1314,7 @@ class MainActivity : AppCompatActivity() {
 }
 
 // =====================================================================
-// BroadcastReceiver — نمایش اعلان و پخش صدای دلخواه (🔧 باگ ۱)
+// BroadcastReceiver — نمایش اعلان و پخش صدای دلخواه
 // =====================================================================
 class ReminderReceiver : BroadcastReceiver() {
 
@@ -1311,10 +1331,6 @@ class ReminderReceiver : BroadcastReceiver() {
         val isCustom = ringtone.isNotBlank() && ringtone != "silent"
         val isSilent = ringtone == "silent"
 
-        // 🔧 باگ ۱: انتخاب کانال مناسب
-        // صدای دلخواه → کانال بی‌صدا + پخش دستی
-        // بدون صدا → کانال بی‌صدا
-        // پیش‌فرض → کانال عادی (خودش صدا پخش می‌کند)
         val channelToUse = if (isCustom || isSilent) CHANNEL_ID_SILENT else CHANNEL_ID
 
         val builder = NotificationCompat.Builder(context, channelToUse)
@@ -1325,16 +1341,13 @@ class ReminderReceiver : BroadcastReceiver() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
 
-        // پیش از اندروید ۸، setSound روی builder کار می‌کند
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             when {
                 isSilent -> builder.setSound(null)
                 isCustom -> builder.setSound(Uri.parse(ringtone))
-                // پیش‌فرض: دست نمی‌زنیم
             }
         }
 
-        // چک مجوز اعلان در API 33+
         val canNotify = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(
                 context,
@@ -1353,7 +1366,6 @@ class ReminderReceiver : BroadcastReceiver() {
                 }
             }
 
-            // 🔧 باگ ۱: پخش دستی صدای دلخواه در API 26+
             if (isCustom && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 playCustomRingtone(context, Uri.parse(ringtone), pendingResult)
             } else {
@@ -1364,7 +1376,7 @@ class ReminderReceiver : BroadcastReceiver() {
             pendingResult.finish()
         }
 
-        // ---- زمان‌بندی تکرار بعدی ----
+        // زمان‌بندی تکرار بعدی
         val nextTime = when (repeatMode) {
             "daily" -> System.currentTimeMillis() + 24L * 60L * 60L * 1000L
             "weekly" -> System.currentTimeMillis() + 7L * 24L * 60L * 60L * 1000L
@@ -1419,7 +1431,6 @@ class ReminderReceiver : BroadcastReceiver() {
         }
     }
 
-    /** پخش صدای دلخواه به‌صورت دستی، چون اندروید ۸+ صدای کانال را قفل می‌کند */
     private fun playCustomRingtone(
         context: Context,
         uri: Uri,
@@ -1442,7 +1453,6 @@ class ReminderReceiver : BroadcastReceiver() {
 
             ringtone.play()
 
-            // چند ثانیه صبر کن تا صدا پخش شود، سپس receiver را آزاد کن
             Handler(Looper.getMainLooper()).postDelayed({
                 try { ringtone.stop() } catch (_: Exception) {}
                 pendingResult.finish()
