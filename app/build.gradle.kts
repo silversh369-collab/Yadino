@@ -66,6 +66,6 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     
-    // 🔧 کتابخانه صفحه لودینگ (Splash Screen)
+    // 🔧 کتابخانه صفحه لودینگ
     implementation("androidx.core:core-splashscreen:1.0.1")
 }
