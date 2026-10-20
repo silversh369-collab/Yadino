@@ -155,6 +155,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 🔧 فعال سازی صفحه لودینگ (Splash Screen)
+        androidx.core.splashscreen.SplashScreen.installSplashScreen(this)
+        
         super.onCreate(savedInstanceState)
         try {
             initializeSecureStorage()
@@ -223,7 +226,7 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
         }
 
-        // 🔧 قاب طلای واقعی (Multi-layer Gradient)
+        // 🔧 قاب طلای واقعی
         fun styleInput(editText: EditText) {
             editText.setTextColor(Color.parseColor(COLOR_TEXT_PRIMARY))
             editText.setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
@@ -522,9 +525,6 @@ class MainActivity : AppCompatActivity() {
         override fun getItemCount() = items.size
     }
 
-    // ===================================================================
-    // 🎤 سیستم ضبط صدا هوشمند (دقیقاً مثل Gboard)
-    // ===================================================================
     private fun toggleVoiceInput(offline: Boolean) {
         if (continuousSpeech) {
             stopContinuousSpeech()
@@ -538,7 +538,6 @@ class MainActivity : AppCompatActivity() {
             micStatusText.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
             micButton.text = "🛑 توقف ضبط"
             
-            // افکت چشمک زدن متن
             startBlinkingStatus()
         }
     }
@@ -569,23 +568,17 @@ class MainActivity : AppCompatActivity() {
         }
 
         speechRecognizer?.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {
-                // آماده شنیدن
-            }
+            override fun onReadyForSpeech(params: Bundle?) { }
             override fun onBeginningOfSpeech() {
-                // کاربر شروع به حرف زدن کرد
                 runOnUiThread {
                     micStatusText.text = "در حال گوش دادن..."
-                    micStatusText.setTextColor(Color.parseColor("#4CAF50")) // سبز روشن
-                    micStatusText.clearAnimation() // قطع چشمک زدن موقع حرف زدن
+                    micStatusText.setTextColor(Color.parseColor("#4CAF50"))
+                    micStatusText.clearAnimation()
                 }
             }
-            override fun onRmsChanged(rmsdB: Float) {
-                // نوسان صدا - نیازی به کار خاصی نیست
-            }
+            override fun onRmsChanged(rmsdB: Float) { }
             override fun onBufferReceived(buffer: ByteArray?) = Unit
             override fun onEndOfSpeech() {
-                // کاربر ساکت شد
                 runOnUiThread {
                     if (continuousSpeech) {
                         micStatusText.text = "صحبت کنید..."
@@ -624,10 +617,9 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
-                // 🔧 ری‌استارت فوری و بی‌صدا (بدون اینکه کاربر متوجه بشه)
                 if (continuousSpeech) {
                     handler.removeCallbacks(restartRunnable)
-                    handler.postDelayed(restartRunnable, 10) // تاخیر خیلی کم
+                    handler.postDelayed(restartRunnable, 10)
                 }
             }
 
@@ -640,7 +632,6 @@ class MainActivity : AppCompatActivity() {
                     startVoiceInput()
                     return
                 }
-                // 🔧 اگر خطا فقط سکوت بود (NO_MATCH) یا زمان تمام شد، سریع ری‌استارت کن
                 if (continuousSpeech) {
                     handler.removeCallbacks(restartRunnable)
                     handler.postDelayed(restartRunnable, 10)
@@ -658,7 +649,6 @@ class MainActivity : AppCompatActivity() {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            // 🔧 تنظیم زمان سکوت برای اینکه وسط حرف مکث نکنه
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000L)
