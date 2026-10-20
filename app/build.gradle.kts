@@ -40,13 +40,10 @@ android {
     buildTypes {
         getByName("release") {
             isMinifyEnabled = false
-
             if (releaseSigningReady) {
                 signingConfig = signingConfigs.getByName("release")
             } else {
-                throw GradleException(
-                    "Release signing secrets are missing. Check GitHub Actions secrets."
-                )
+                throw GradleException("Release signing secrets are missing.")
             }
         }
     }
