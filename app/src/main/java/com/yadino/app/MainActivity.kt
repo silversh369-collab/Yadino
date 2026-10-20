@@ -42,6 +42,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.splashscreen.SplashScreen // 👈 ایمپورت اضافه شد
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.security.crypto.EncryptedSharedPreferences
@@ -65,7 +66,6 @@ private const val CHANNEL_ID_SILENT = "yadino_reminders_silent"
 private const val AUDIO_PERMISSION_CODE = 7002
 private const val NOTIFICATION_PERMISSION_CODE = 7003
 
-// رنگ‌های تم لاکچری
 private const val COLOR_BG_TOP = "#1A1A1A"
 private const val COLOR_BG_BOTTOM = "#050505"
 private const val COLOR_CARD = "#181818"
@@ -117,7 +117,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var mainScroll: ScrollView
     private lateinit var securePrefs: android.content.SharedPreferences
 
-    // ویوهای میکروفون
     private lateinit var micStatusText: TextView
     private lateinit var micButton: Button
     private var blinkAnimation: AlphaAnimation? = null
@@ -156,7 +155,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // 🔧 فعال سازی صفحه لودینگ (Splash Screen)
-        androidx.core.splashscreen.SplashScreen.installSplashScreen(this)
+        SplashScreen.installSplashScreen(this)
         
         super.onCreate(savedInstanceState)
         try {
@@ -226,7 +225,6 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
         }
 
-        // 🔧 قاب طلای واقعی
         fun styleInput(editText: EditText) {
             editText.setTextColor(Color.parseColor(COLOR_TEXT_PRIMARY))
             editText.setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
@@ -313,7 +311,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 🔧 دکمه میکروفون با متن وضعیت زیرش
         micButton = createGoldButton("🎤 شروع ضبط صدا") { toggleVoiceInput(false) }
         formContainer.addView(micButton, matchWidth())
 
