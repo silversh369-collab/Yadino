@@ -42,7 +42,6 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import androidx.core.splashscreen.SplashScreen // 👈 ایمپورت اضافه شد
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.security.crypto.EncryptedSharedPreferences
@@ -154,8 +153,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // 🔧 فعال سازی صفحه لودینگ (Splash Screen)
-        SplashScreen.installSplashScreen(this)
+        // 🔧 استفاده از مسیر کامل برای جلوگیری از ارور
+        androidx.core.splashscreen.SplashScreen.installSplashScreen(this)
         
         super.onCreate(savedInstanceState)
         try {
