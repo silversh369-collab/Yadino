@@ -59,10 +59,10 @@ private const val AUDIO_PERMISSION_CODE = 7002
 private const val NOTIFICATION_PERMISSION_CODE = 7003
 
 // رنگ‌های تم لاکچری
-private const val COLOR_BG = "#0A0A0A"         // مشکی عمیق
-private const val COLOR_CARD = "#141414"       // خاکستری تیره
-private const val COLOR_CARD_BORDER = "#2A2A2A" // حاشیه کارت
-private const val COLOR_GOLD = "#D4AF37"       // طلایی
+private const val COLOR_BG = "#0A0A0A"
+private const val COLOR_CARD = "#141414"
+private const val COLOR_CARD_BORDER = "#2A2A2A"
+private const val COLOR_GOLD = "#D4AF37"
 private const val COLOR_TEXT_PRIMARY = "#FFFFFF"
 private const val COLOR_TEXT_SECONDARY = "#A0A0A0"
 
@@ -167,7 +167,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ===================================================================
-    // دیزاین جدید، کاملاً تاریک و لاکچری
+    // دیزاین لاکچری
     // ===================================================================
     private fun buildScreen() {
         val root = FrameLayout(this).apply {
@@ -178,10 +178,9 @@ class MainActivity : AppCompatActivity() {
         mainScroll = ScrollView(this)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(40, 60, 40, 250) // فاصله زیاد از پایین برای FAB
+            setPadding(40, 60, 40, 250)
         }
 
-        // هدر لاکچری
         content.addView(TextView(this).apply {
             text = "یادینو"
             textSize = 36f
@@ -196,7 +195,6 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
         }
 
-        // استایل دادن به فیلدهای متنی
         fun styleInput(editText: EditText) {
             editText.setTextColor(Color.parseColor(COLOR_TEXT_PRIMARY))
             editText.setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
@@ -235,7 +233,6 @@ class MainActivity : AppCompatActivity() {
         taskInput.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) speechTarget = taskInput }
         formContainer.addView(taskInput, matchWidth())
 
-        // دکمه‌های لاکچری
         fun createGoldButton(text: String, onClick: () -> Unit): Button {
             return Button(this).apply {
                 this.text = text
@@ -271,7 +268,6 @@ class MainActivity : AppCompatActivity() {
 
         content.addView(formContainer)
 
-        // اسپینر فیلتر با استایل تیره
         filterSpinner = Spinner(this)
         filterSpinner.adapter = spinnerAdapter(categories)
         filterSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -300,17 +296,10 @@ class MainActivity : AppCompatActivity() {
         mainScroll.addView(content)
         root.addView(mainScroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
-        // FAB لاکچری: مشکی با حاشیه طلایی و آیکون طلایی
         val fab = FloatingActionButton(this).apply {
-            // استفاده از یک پلاس ساده به عنوان آیکون
-            setImageDrawable(android.graphics.drawable.GradientDrawable().apply {
-                 // نمیتونیم مستقیما آیکون رسم کنیم، پس از یک دکمه متنی استفاده میکنیم یا وکتور
-            })
-            
-            // روش بهتر: استفاده از آیکون پیش‌فرض با رنگ سفید
             setImageResource(android.R.drawable.ic_input_add)
-            imageTintList = ColorStateList.valueOf(Color.parseColor(COLOR_BG))
-            backgroundTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD)) // پس‌زمینه دکمه طلایی
+            imageTintList = ColorStateList.valueOf(Color.parseColor(COLOR_BG)) 
+            backgroundTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
             compatElevation = 20f
             setOnClickListener { formContainer.visibility = View.VISIBLE; mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) } }
         }
@@ -322,8 +311,6 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(root)
     }
-
-    private fun setupFocusTracking(editText: EditText) { /* دیگه نیازی نیست، بالاتر هندل شد */ }
 
     private fun matchWidth(): LinearLayout.LayoutParams =
         LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 24 }
@@ -342,14 +329,12 @@ class MainActivity : AppCompatActivity() {
     private fun showForm() { formContainer.visibility = View.VISIBLE; mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) } }
 
     private fun renderNotes() {
-        val selectedCategory = if (::filterSpinner.isInitialized) filterSpinner.item?.toString() ?: "همه دسته‌ها" else "همه دسته‌ها"
+        // 🔧 اصلاح باگ: به جای .item از .selectedItem استفاده شد
+        val selectedCategory = if (::filterSpinner.isInitialized) filterSpinner.selectedItem?.toString() ?: "همه دسته‌ها" else "همه دسته‌ها"
         val visibleNotes = notes.filter { selectedCategory == "همه دسته‌ها" || it.category == selectedCategory }
         noteAdapter.updateData(visibleNotes)
     }
 
-    // ===================================================================
-    // آداپتر کارت‌های لاکچری
-    // ===================================================================
     inner class NoteAdapter(
         private var items: List<Note>,
         private val onClick: (Note) -> Unit,
@@ -438,9 +423,6 @@ class MainActivity : AppCompatActivity() {
         override fun getItemCount() = items.size
     }
 
-    // ===================================================================
-    // بخش‌های منطقی (میکروفون، ذخیره، یادآور و...)
-    // ===================================================================
     private fun toggleVoiceInput(offline: Boolean) {
         if (continuousSpeech) stopContinuousSpeech()
         else {
@@ -604,7 +586,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun showNoteOptionsMenu(note: Note) {
         val options = arrayOf("🎨 تغییر رنگ", "🗑️ حذف")
-        AlertDialog.Builder(this, R.style.Theme_AppCompat_Dialog_Alert).setTitle("تنظیمات").setItems(options) { _, which ->
+        // 🔧 اصلاح باگ: R.style برداشته شد و از AlertDialog.Builder استاندارد استفاده شد
+        AlertDialog.Builder(this).setTitle("تنظیمات").setItems(options) { _, which ->
             if (which == 0) showColorPicker(note) else confirmDelete(note)
         }.show()
     }
