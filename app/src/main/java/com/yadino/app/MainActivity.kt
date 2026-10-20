@@ -11,8 +11,10 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.res.Configuration
+import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.net.Uri
@@ -23,6 +25,7 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.text.InputType
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -55,8 +58,15 @@ private const val CHANNEL_ID_SILENT = "yadino_reminders_silent"
 private const val AUDIO_PERMISSION_CODE = 7002
 private const val NOTIFICATION_PERMISSION_CODE = 7003
 
+// رنگ‌های تم لاکچری
+private const val COLOR_BG = "#0A0A0A"         // مشکی عمیق
+private const val COLOR_CARD = "#141414"       // خاکستری تیره
+private const val COLOR_CARD_BORDER = "#2A2A2A" // حاشیه کارت
+private const val COLOR_GOLD = "#D4AF37"       // طلایی
+private const val COLOR_TEXT_PRIMARY = "#FFFFFF"
+private const val COLOR_TEXT_SECONDARY = "#A0A0A0"
+
 private const val REMINDER_NONE_TEXT = "یادآور تنظیم نشده است"
-private const val REMINDER_DISABLED_TEXT = "یادآور غیرفعال است"
 
 data class Task(
     val id: String = UUID.randomUUID().toString(),
@@ -116,8 +126,6 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private val restartRunnable = Runnable { if (continuousSpeech) launchRecognizer() }
 
-    private var isDarkTheme = false
-
     private val ringtonePickerLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -135,7 +143,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        isDarkTheme = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         try {
             initializeSecureStorage()
             loadNotes()
@@ -159,28 +166,29 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    // ===================================================================
+    // دیزاین جدید، کاملاً تاریک و لاکچری
+    // ===================================================================
     private fun buildScreen() {
-        val bgColor = if (isDarkTheme) Color.parseColor("#121212") else Color.parseColor("#FFFFFF")
-        val textColor = if (isDarkTheme) Color.parseColor("#FFFFFF") else Color.parseColor("#000000")
-
         val root = FrameLayout(this).apply {
-            setBackgroundColor(bgColor)
+            setBackgroundColor(Color.parseColor(COLOR_BG))
             layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
 
         mainScroll = ScrollView(this)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 24, 24, 200)
+            setPadding(40, 60, 40, 250) // فاصله زیاد از پایین برای FAB
         }
 
+        // هدر لاکچری
         content.addView(TextView(this).apply {
             text = "یادینو"
-            textSize = 32f
-            setTextColor(textColor)
+            textSize = 36f
+            setTextColor(Color.parseColor(COLOR_TEXT_PRIMARY))
             gravity = Gravity.CENTER
-            setPadding(0, 10, 0, 20)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            setPadding(0, 0, 0, 30)
         })
 
         formContainer = LinearLayout(this).apply {
@@ -188,11 +196,26 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
         }
 
-        titleInput = EditText(this).apply { hint = "عنوان یادداشت"; setTextColor(textColor) }
+        // استایل دادن به فیلدهای متنی
+        fun styleInput(editText: EditText) {
+            editText.setTextColor(Color.parseColor(COLOR_TEXT_PRIMARY))
+            editText.setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+            editText.background = GradientDrawable().apply {
+                setColor(Color.parseColor(COLOR_CARD))
+                cornerRadius = 30f
+                setStroke(2, Color.parseColor(COLOR_CARD_BORDER))
+            }
+            editText.setPadding(30, 30, 30, 30)
+            editText.textSize = 16f
+        }
+
+        titleInput = EditText(this).apply { hint = "عنوان یادداشت" }
+        styleInput(titleInput)
         titleInput.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) speechTarget = titleInput }
         formContainer.addView(titleInput, matchWidth())
 
-        bodyInput = EditText(this).apply { hint = "متن یادداشت"; minLines = 3; gravity = Gravity.TOP or Gravity.RIGHT; setTextColor(textColor) }
+        bodyInput = EditText(this).apply { hint = "متن یادداشت"; minLines = 3; gravity = Gravity.TOP or Gravity.RIGHT }
+        styleInput(bodyInput)
         bodyInput.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) speechTarget = bodyInput }
         formContainer.addView(bodyInput, matchWidth())
 
@@ -200,29 +223,55 @@ class MainActivity : AppCompatActivity() {
         categorySpinner.adapter = spinnerAdapter(categories.drop(1))
         formContainer.addView(categorySpinner, matchWidth())
 
-        privateCheckBox = CheckBox(this).apply { text = "یادداشت خصوصی باشد"; setTextColor(textColor) }
+        privateCheckBox = CheckBox(this).apply { 
+            text = "یادداشت خصوصی باشد"
+            setTextColor(Color.parseColor(COLOR_TEXT_PRIMARY))
+            buttonTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
+        }
         formContainer.addView(privateCheckBox)
 
-        taskInput = EditText(this).apply { hint = "کارها (هر خط یک کار)"; minLines = 2; gravity = Gravity.TOP or Gravity.RIGHT; setTextColor(textColor) }
+        taskInput = EditText(this).apply { hint = "کارها (هر خط یک کار)"; minLines = 2; gravity = Gravity.TOP or Gravity.RIGHT }
+        styleInput(taskInput)
         taskInput.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) speechTarget = taskInput }
         formContainer.addView(taskInput, matchWidth())
 
-        formContainer.addView(Button(this).apply {
-            text = "🎤 شروع ضبط صدا (کلیک: آنلاین | نگه‌داشتن: آفلاین)"
-            setOnClickListener { toggleVoiceInput(false) }
-            setOnLongClickListener { toggleVoiceInput(true); true }
-        }, matchWidth())
+        // دکمه‌های لاکچری
+        fun createGoldButton(text: String, onClick: () -> Unit): Button {
+            return Button(this).apply {
+                this.text = text
+                setTextColor(Color.BLACK)
+                textSize = 16f
+                typeface = Typeface.DEFAULT_BOLD
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor(COLOR_GOLD))
+                    cornerRadius = 30f
+                }
+                setOnClickListener { onClick() }
+            }
+        }
 
-        formContainer.addView(Button(this).apply { text = "تنظیم یادآور"; setOnClickListener { configureReminder() } }, matchWidth())
+        formContainer.addView(createGoldButton("🎤 شروع ضبط صدا") { toggleVoiceInput(false) }, matchWidth())
+        formContainer.addView(createGoldButton("تنظیم یادآور") { configureReminder() }, matchWidth())
 
-        reminderSummary = TextView(this).apply { text = REMINDER_NONE_TEXT; setTextColor(textColor) }
+        reminderSummary = TextView(this).apply { 
+            text = REMINDER_NONE_TEXT
+            setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+            gravity = Gravity.CENTER
+            setPadding(0, 20, 0, 20)
+        }
         formContainer.addView(reminderSummary, matchWidth())
 
-        formContainer.addView(Button(this).apply { text = "ذخیره یادداشت"; setOnClickListener { saveCurrentNote() } }, matchWidth())
-        formContainer.addView(Button(this).apply { text = "انصراف"; setOnClickListener { formContainer.visibility = View.GONE; clearForm() } }, matchWidth())
+        formContainer.addView(createGoldButton("ذخیره یادداشت") { saveCurrentNote() }, matchWidth())
+        formContainer.addView(Button(this).apply {
+            text = "انصراف"
+            setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+            background = null
+            setOnClickListener { formContainer.visibility = View.GONE; clearForm() }
+        }, matchWidth())
 
         content.addView(formContainer)
 
+        // اسپینر فیلتر با استایل تیره
         filterSpinner = Spinner(this)
         filterSpinner.adapter = spinnerAdapter(categories)
         filterSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -251,33 +300,56 @@ class MainActivity : AppCompatActivity() {
         mainScroll.addView(content)
         root.addView(mainScroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
+        // FAB لاکچری: مشکی با حاشیه طلایی و آیکون طلایی
         val fab = FloatingActionButton(this).apply {
+            // استفاده از یک پلاس ساده به عنوان آیکون
+            setImageDrawable(android.graphics.drawable.GradientDrawable().apply {
+                 // نمیتونیم مستقیما آیکون رسم کنیم، پس از یک دکمه متنی استفاده میکنیم یا وکتور
+            })
+            
+            // روش بهتر: استفاده از آیکون پیش‌فرض با رنگ سفید
             setImageResource(android.R.drawable.ic_input_add)
-            backgroundTintList = android.content.res.ColorStateList.valueOf(if (isDarkTheme) Color.parseColor("#BB86FC") else Color.parseColor("#6200EE"))
+            imageTintList = ColorStateList.valueOf(Color.parseColor(COLOR_BG))
+            backgroundTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD)) // پس‌زمینه دکمه طلایی
+            compatElevation = 20f
             setOnClickListener { formContainer.visibility = View.VISIBLE; mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) } }
         }
-        val fabParams = FrameLayout.LayoutParams(150, 150).apply { gravity = Gravity.BOTTOM or Gravity.START; setMargins(40, 40, 40, 40) }
+        val fabParams = FrameLayout.LayoutParams(160, 160).apply { 
+            gravity = Gravity.BOTTOM or Gravity.START
+            setMargins(50, 50, 50, 50) 
+        }
         root.addView(fab, fabParams)
 
         setContentView(root)
     }
 
+    private fun setupFocusTracking(editText: EditText) { /* دیگه نیازی نیست، بالاتر هندل شد */ }
+
     private fun matchWidth(): LinearLayout.LayoutParams =
-        LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 16 }
+        LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 24 }
 
     private fun spinnerAdapter(items: List<String>): ArrayAdapter<String> {
-        return ArrayAdapter(this, android.R.layout.simple_spinner_item, items).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        return object : ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, items) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val view = super.getView(position, convertView, parent) as TextView
+                view.setTextColor(Color.parseColor(COLOR_TEXT_PRIMARY))
+                view.textSize = 16f
+                return view
+            }
+        }.also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
     }
 
     private fun showForm() { formContainer.visibility = View.VISIBLE; mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) } }
 
     private fun renderNotes() {
-        val selectedCategory = if (::filterSpinner.isInitialized) filterSpinner.selectedItem?.toString() ?: "همه دسته‌ها" else "همه دسته‌ها"
+        val selectedCategory = if (::filterSpinner.isInitialized) filterSpinner.item?.toString() ?: "همه دسته‌ها" else "همه دسته‌ها"
         val visibleNotes = notes.filter { selectedCategory == "همه دسته‌ها" || it.category == selectedCategory }
         noteAdapter.updateData(visibleNotes)
     }
 
-    // 🔧 آداپتر اصلاح‌شده برای RecyclerView (رفع ارور columnSpec)
+    // ===================================================================
+    // آداپتر کارت‌های لاکچری
+    // ===================================================================
     inner class NoteAdapter(
         private var items: List<Note>,
         private val onClick: (Note) -> Unit,
@@ -295,20 +367,23 @@ class MainActivity : AppCompatActivity() {
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
             val card = LinearLayout(parent.context).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(30, 30, 30, 30)
-                // استفاده از LayoutParams استاندارد RecyclerView
+                setPadding(40, 40, 40, 40)
                 layoutParams = RecyclerView.LayoutParams(
                     RecyclerView.LayoutParams.MATCH_PARENT,
                     RecyclerView.LayoutParams.WRAP_CONTENT
                 ).apply {
-                    marginEnd = 15
-                    bottomMargin = 20
+                    marginEnd = 20
+                    bottomMargin = 30
                 }
-                background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 30f; setColor(Color.GRAY) }
+                background = GradientDrawable().apply { 
+                    cornerRadius = 40f
+                    setColor(Color.parseColor(COLOR_CARD))
+                    setStroke(2, Color.parseColor(COLOR_CARD_BORDER))
+                }
             }
-            val title = TextView(parent.context).apply { textSize = 18f; typeface = android.graphics.Typeface.DEFAULT_BOLD }
-            val body = TextView(parent.context).apply { textSize = 14f; maxLines = 4; setPadding(0, 10, 0, 10) }
-            val progress = TextView(parent.context).apply { textSize = 12f }
+            val title = TextView(parent.context).apply { textSize = 20f; typeface = Typeface.DEFAULT_BOLD }
+            val body = TextView(parent.context).apply { textSize = 15f; maxLines = 4; setPadding(0, 15, 0, 15) }
+            val progress = TextView(parent.context).apply { textSize = 13f }
             val tasksLayout = LinearLayout(parent.context).apply { orientation = LinearLayout.VERTICAL }
             
             card.addView(title); card.addView(body); card.addView(progress); card.addView(tasksLayout)
@@ -317,20 +392,20 @@ class MainActivity : AppCompatActivity() {
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val note = items[position]
-            val cardColor = if (note.colorHex.isNotBlank()) Color.parseColor(note.colorHex) else if (isDarkTheme) Color.parseColor("#1E1E1E") else Color.parseColor("#F2F2F2")
-            val textColor = if (isColorDark(cardColor)) Color.WHITE else Color.BLACK
+            val bgColor = Color.parseColor(if (note.colorHex.isNotBlank()) note.colorHex else COLOR_CARD)
+            val textColor = Color.parseColor(COLOR_TEXT_PRIMARY) 
 
-            (holder.card.background as android.graphics.drawable.GradientDrawable).setColor(cardColor)
+            (holder.card.background as GradientDrawable).setColor(bgColor)
 
             holder.title.setTextColor(textColor)
             holder.title.text = if (note.isPrivate) "🔒 ${note.title}" else note.title
-            holder.body.setTextColor(textColor)
+            holder.body.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
             holder.body.text = note.body
             
             holder.tasksLayout.removeAllViews()
             if (note.tasks.isNotEmpty()) {
                 holder.progress.visibility = View.VISIBLE
-                holder.progress.setTextColor(if (isColorDark(cardColor)) Color.LTGRAY else Color.DKGRAY)
+                holder.progress.setTextColor(Color.parseColor(COLOR_GOLD))
                 
                 fun updateProgressUI() {
                     val done = note.tasks.count { it.done }
@@ -343,6 +418,7 @@ class MainActivity : AppCompatActivity() {
                         text = task.text
                         isChecked = task.done
                         setTextColor(textColor)
+                        buttonTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
                         setOnCheckedChangeListener { _, checked ->
                             task.done = checked
                             updateProgressUI()
@@ -362,15 +438,12 @@ class MainActivity : AppCompatActivity() {
         override fun getItemCount() = items.size
     }
 
-    private fun isColorDark(color: Int): Boolean {
-        val darkness = 1 - (0.299 * Color.red(color) + 0.587 * Color.green(color) + 0.114 * Color.blue(color)) / 255
-        return darkness >= 0.5
-    }
-
+    // ===================================================================
+    // بخش‌های منطقی (میکروفون، ذخیره، یادآور و...)
+    // ===================================================================
     private fun toggleVoiceInput(offline: Boolean) {
-        if (continuousSpeech) {
-            stopContinuousSpeech()
-        } else {
+        if (continuousSpeech) stopContinuousSpeech()
+        else {
             isOfflineMode = offline
             startVoiceInput()
         }
@@ -381,7 +454,6 @@ class MainActivity : AppCompatActivity() {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), AUDIO_PERMISSION_CODE)
             return
         }
-
         val target = speechTarget ?: bodyInput
         voiceBaseText = target.text.toString()
         continuousSpeech = true
@@ -532,14 +604,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun showNoteOptionsMenu(note: Note) {
         val options = arrayOf("🎨 تغییر رنگ", "🗑️ حذف")
-        AlertDialog.Builder(this).setTitle("تنظیمات").setItems(options) { _, which ->
+        AlertDialog.Builder(this, R.style.Theme_AppCompat_Dialog_Alert).setTitle("تنظیمات").setItems(options) { _, which ->
             if (which == 0) showColorPicker(note) else confirmDelete(note)
         }.show()
     }
 
     private fun showColorPicker(note: Note) {
-        val colors = arrayOf("#F2F2F2", "#FFCDD2", "#F8BBD0", "#C5CAE9", "#BBDEFB", "#B2DFDB", "#FFF9C4")
-        val names = arrayOf("پیش‌فرض", "قرمز", "صورتی", "نیلی", "آبی", "سبز", "زرد")
+        val colors = arrayOf("#141414", "#2B1010", "#1A2A15", "#15203B", "#2A1B38")
+        val names = arrayOf("پیش‌فرض", "قرمز تیره", "سبز تیره", "آبی تیره", "بنفش تیره")
         AlertDialog.Builder(this).setTitle("رنگ").setItems(names) { _, w ->
             note.colorHex = colors[w]; saveNotes(); renderNotes()
         }.show()
@@ -578,14 +650,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun configureCustomInterval() {
-        val inp = EditText(this).apply { hint = "دقیقه"; inputType = android.text.InputType.TYPE_CLASS_NUMBER; setText(selectedRepeatInterval.toString()) }
+        val inp = EditText(this).apply { hint = "دقیقه"; inputType = InputType.TYPE_CLASS_NUMBER; setText(selectedRepeatInterval.toString()) }
         AlertDialog.Builder(this).setTitle("فاصله").setView(inp).setPositiveButton("OK") { _, _ ->
             selectedRepeatInterval = inp.text.toString().toIntOrNull() ?: 60; selectedRepeatMode = "interval"; chooseRingtone()
         }.show()
     }
 
     private fun configureRepeatCount() {
-        val inp = EditText(this).apply { hint = "دفعات"; inputType = android.text.InputType.TYPE_CLASS_NUMBER; setText("3") }
+        val inp = EditText(this).apply { hint = "دفعات"; inputType = InputType.TYPE_CLASS_NUMBER; setText("3") }
         AlertDialog.Builder(this).setTitle("تعداد").setView(inp).setPositiveButton("OK") { _, _ ->
             selectedRepeatCount = (inp.text.toString().toIntOrNull() ?: 3).coerceIn(1, 100); selectedRepeatMode = "count"; chooseRingtone()
         }.show()
@@ -670,7 +742,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showSetPinDialog(onSuccess: () -> Unit) {
-        val inp = EditText(this).apply { hint = "PIN جدید"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD }
+        val inp = EditText(this).apply { hint = "PIN جدید"; inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD; setTextColor(Color.WHITE) }
         AlertDialog.Builder(this).setTitle("ساخت PIN").setView(inp).setNegativeButton("لغو", null).setPositiveButton("ذخیره") { _, _ ->
             if (inp.text.length < 4) Toast.makeText(this, "حداقل ۴ رقم", Toast.LENGTH_SHORT).show()
             else { securePrefs.edit().putString(PIN_KEY, MessageDigest.getInstance("SHA-256").digest(inp.text.toString().toByteArray()).joinToString("") { "%02x".format(it) }).apply(); onSuccess() }
@@ -678,7 +750,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestPin(message: String, callback: (Boolean) -> Unit) {
-        val inp = EditText(this).apply { hint = "PIN"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD }
+        val inp = EditText(this).apply { hint = "PIN"; inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD; setTextColor(Color.WHITE) }
         AlertDialog.Builder(this).setTitle(message).setView(inp).setNegativeButton("لغو") { _, _ -> callback(false) }.setPositiveButton("تأیید") { _, _ ->
             val hash = MessageDigest.getInstance("SHA-256").digest(inp.text.toString().toByteArray()).joinToString("") { "%02x".format(it) }
             val ok = securePrefs.getString(PIN_KEY, null) == hash; if (!ok) Toast.makeText(this, "اشتباه", Toast.LENGTH_SHORT).show(); callback(ok)
