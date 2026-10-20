@@ -15,6 +15,7 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.net.Uri
@@ -30,6 +31,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -40,6 +42,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.google.android.material.card.MaterialCardView
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import org.json.JSONArray
 import org.json.JSONObject
@@ -59,10 +62,11 @@ private const val AUDIO_PERMISSION_CODE = 7002
 private const val NOTIFICATION_PERMISSION_CODE = 7003
 
 // رنگ‌های تم لاکچری
-private const val COLOR_BG = "#0A0A0A"
-private const val COLOR_CARD = "#141414"
-private const val COLOR_CARD_BORDER = "#2A2A2A"
-private const val COLOR_GOLD = "#D4AF37"
+private const val COLOR_BG = "#0A0A0A"         // مشکی عمیق
+private const val COLOR_CARD = "#181818"       // خاکستری تیره
+private const val COLOR_CARD_BORDER = "#2A2A2A" // حاشیه کارت
+private const val COLOR_GOLD = "#D4AF37"       // طلایی
+private const val COLOR_GOLD_DARK = "#AA8B2B"  // طلایی تیره برای گرادیانت
 private const val COLOR_TEXT_PRIMARY = "#FFFFFF"
 private const val COLOR_TEXT_SECONDARY = "#A0A0A0"
 
@@ -167,7 +171,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ===================================================================
-    // دیزاین لاکچری
+    // دیزاین لاکچری + افکت‌ها
     // ===================================================================
     private fun buildScreen() {
         val root = FrameLayout(this).apply {
@@ -195,14 +199,18 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
         }
 
+        // استایل دادن به فیلدهای متنی با افکت کلیک (Ripple)
         fun styleInput(editText: EditText) {
             editText.setTextColor(Color.parseColor(COLOR_TEXT_PRIMARY))
             editText.setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
-            editText.background = GradientDrawable().apply {
+            val bg = GradientDrawable().apply {
                 setColor(Color.parseColor(COLOR_CARD))
                 cornerRadius = 30f
                 setStroke(2, Color.parseColor(COLOR_CARD_BORDER))
             }
+            // ایجاد افکت موج (Ripple) روی فیلد متنی
+            val ripple = RippleDrawable(ColorStateList.valueOf(Color.parseColor("#33D4AF37")), bg, null)
+            editText.background = ripple
             editText.setPadding(30, 30, 30, 30)
             editText.textSize = 16f
         }
@@ -233,17 +241,31 @@ class MainActivity : AppCompatActivity() {
         taskInput.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) speechTarget = taskInput }
         formContainer.addView(taskInput, matchWidth())
 
+        // دکمه‌های گرادیانتی با افکت موج
         fun createGoldButton(text: String, onClick: () -> Unit): Button {
             return Button(this).apply {
                 this.text = text
                 setTextColor(Color.BLACK)
                 textSize = 16f
                 typeface = Typeface.DEFAULT_BOLD
-                background = GradientDrawable().apply {
-                    setColor(Color.parseColor(COLOR_GOLD))
-                    cornerRadius = 30f
+                
+                // 🔧 افکت گرادیانت طلایی
+                val gradient = GradientDrawable(
+                    GradientDrawable.Orientation.TL_BR, 
+                    intArrayOf(Color.parseColor(COLOR_GOLD), Color.parseColor(COLOR_GOLD_DARK))
+                ).apply { cornerRadius = 30f }
+                
+                // 🔧 افکت موج با رنگ مشکی ملایم
+                val ripple = RippleDrawable(ColorStateList.valueOf(Color.parseColor("#33000000")), gradient, null)
+                background = ripple
+                
+                // 🔧 انیمیشن کوچک شدن هنگام کلیک
+                setOnClickListener { view ->
+                    view.animate().scaleX(0.95f).scaleY(0.95f).setDuration(100).withEndAction {
+                        view.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+                        onClick()
+                    }.start()
                 }
-                setOnClickListener { onClick() }
             }
         }
 
@@ -296,12 +318,21 @@ class MainActivity : AppCompatActivity() {
         mainScroll.addView(content)
         root.addView(mainScroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
+        // 🔧 FAB با افکت انیمیشن
         val fab = FloatingActionButton(this).apply {
             setImageResource(android.R.drawable.ic_input_add)
             imageTintList = ColorStateList.valueOf(Color.parseColor(COLOR_BG)) 
             backgroundTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
             compatElevation = 20f
-            setOnClickListener { formContainer.visibility = View.VISIBLE; mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) } }
+            
+            // انیمیشن چرخش هنگام کلیک
+            setOnClickListener { view ->
+                view.animate().rotation(90f).setDuration(200).withEndAction {
+                    formContainer.visibility = View.VISIBLE
+                    mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) }
+                    view.animate().rotation(0f).setDuration(0).start() // ریست چرخش
+                }.start()
+            }
         }
         val fabParams = FrameLayout.LayoutParams(160, 160).apply { 
             gravity = Gravity.BOTTOM or Gravity.START
@@ -329,12 +360,14 @@ class MainActivity : AppCompatActivity() {
     private fun showForm() { formContainer.visibility = View.VISIBLE; mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) } }
 
     private fun renderNotes() {
-        // 🔧 اصلاح باگ: به جای .item از .selectedItem استفاده شد
         val selectedCategory = if (::filterSpinner.isInitialized) filterSpinner.selectedItem?.toString() ?: "همه دسته‌ها" else "همه دسته‌ها"
         val visibleNotes = notes.filter { selectedCategory == "همه دسته‌ها" || it.category == selectedCategory }
         noteAdapter.updateData(visibleNotes)
     }
 
+    // ===================================================================
+    // آداپتر کارت‌های لاکچری با MaterialCardView و انیمیشن
+    // ===================================================================
     inner class NoteAdapter(
         private var items: List<Note>,
         private val onClick: (Note) -> Unit,
@@ -342,7 +375,7 @@ class MainActivity : AppCompatActivity() {
         private val onTaskToggle: () -> Unit
     ) : RecyclerView.Adapter<NoteAdapter.ViewHolder>() {
 
-        inner class ViewHolder(val card: LinearLayout, val title: TextView, val body: TextView, val progress: TextView, val tasksLayout: LinearLayout) : RecyclerView.ViewHolder(card)
+        inner class ViewHolder(val card: MaterialCardView, val title: TextView, val body: TextView, val progress: TextView, val tasksLayout: LinearLayout) : RecyclerView.ViewHolder(card)
 
         fun updateData(newItems: List<Note>) {
             items = newItems
@@ -350,9 +383,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-            val card = LinearLayout(parent.context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(40, 40, 40, 40)
+            // 🔧 استفاده از MaterialCardView برای سایه و افکت‌های استاندارد
+            val card = MaterialCardView(parent.context).apply {
                 layoutParams = RecyclerView.LayoutParams(
                     RecyclerView.LayoutParams.MATCH_PARENT,
                     RecyclerView.LayoutParams.WRAP_CONTENT
@@ -360,27 +392,42 @@ class MainActivity : AppCompatActivity() {
                     marginEnd = 20
                     bottomMargin = 30
                 }
-                background = GradientDrawable().apply { 
-                    cornerRadius = 40f
-                    setColor(Color.parseColor(COLOR_CARD))
-                    setStroke(2, Color.parseColor(COLOR_CARD_BORDER))
+                radius = 40f
+                cardElevation = 15f // سایه
+                strokeWidth = 2
+                strokeColor = Color.parseColor(COLOR_CARD_BORDER)
+                setCardBackgroundColor(Color.parseColor(COLOR_CARD))
+                rippleColor = ColorStateList.valueOf(Color.parseColor("#33D4AF37")) // موج طلایی
+                isClickable = true
+                isFocusable = true
+                
+                // چیدمان داخلی کارت
+                val innerLayout = LinearLayout(parent.context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(40, 40, 40, 40)
                 }
+                addView(innerLayout)
             }
+            
+            val innerLayout = card.getChildAt(0) as LinearLayout
             val title = TextView(parent.context).apply { textSize = 20f; typeface = Typeface.DEFAULT_BOLD }
             val body = TextView(parent.context).apply { textSize = 15f; maxLines = 4; setPadding(0, 15, 0, 15) }
             val progress = TextView(parent.context).apply { textSize = 13f }
             val tasksLayout = LinearLayout(parent.context).apply { orientation = LinearLayout.VERTICAL }
             
-            card.addView(title); card.addView(body); card.addView(progress); card.addView(tasksLayout)
+            innerLayout.addView(title); innerLayout.addView(body); innerLayout.addView(progress); innerLayout.addView(tasksLayout)
             return ViewHolder(card, title, body, progress, tasksLayout)
         }
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val note = items[position]
-            val bgColor = Color.parseColor(if (note.colorHex.isNotBlank()) note.colorHex else COLOR_CARD)
             val textColor = Color.parseColor(COLOR_TEXT_PRIMARY) 
 
-            (holder.card.background as GradientDrawable).setColor(bgColor)
+            if (note.colorHex.isNotBlank()) {
+                holder.card.setCardBackgroundColor(Color.parseColor(note.colorHex))
+            } else {
+                holder.card.setCardBackgroundColor(Color.parseColor(COLOR_CARD))
+            }
 
             holder.title.setTextColor(textColor)
             holder.title.text = if (note.isPrivate) "🔒 ${note.title}" else note.title
@@ -416,13 +463,32 @@ class MainActivity : AppCompatActivity() {
                 holder.progress.visibility = View.GONE
             }
 
-            holder.card.setOnClickListener { onClick(note) }
+            // 🔧 انیمیشن ورود برای هر کارت (Fade in & Slide up)
+            holder.card.alpha = 0f
+            holder.card.translationY = 50f
+            holder.card.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(300)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+
+            // 🔧 افکت کلیک (Scale)
+            holder.card.setOnClickListener { view ->
+                view.animate().scaleX(0.95f).scaleY(0.95f).setDuration(100).withEndAction {
+                    view.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+                    onClick(note)
+                }.start()
+            }
             holder.card.setOnLongClickListener { onLongClick(note); true }
         }
 
         override fun getItemCount() = items.size
     }
 
+    // ===================================================================
+    // بخش‌های منطقی
+    // ===================================================================
     private fun toggleVoiceInput(offline: Boolean) {
         if (continuousSpeech) stopContinuousSpeech()
         else {
@@ -586,14 +652,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun showNoteOptionsMenu(note: Note) {
         val options = arrayOf("🎨 تغییر رنگ", "🗑️ حذف")
-        // 🔧 اصلاح باگ: R.style برداشته شد و از AlertDialog.Builder استاندارد استفاده شد
         AlertDialog.Builder(this).setTitle("تنظیمات").setItems(options) { _, which ->
             if (which == 0) showColorPicker(note) else confirmDelete(note)
         }.show()
     }
 
     private fun showColorPicker(note: Note) {
-        val colors = arrayOf("#141414", "#2B1010", "#1A2A15", "#15203B", "#2A1B38")
+        val colors = arrayOf("#181818", "#2B1010", "#1A2A15", "#15203B", "#2A1B38")
         val names = arrayOf("پیش‌فرض", "قرمز تیره", "سبز تیره", "آبی تیره", "بنفش تیره")
         AlertDialog.Builder(this).setTitle("رنگ").setItems(names) { _, w ->
             note.colorHex = colors[w]; saveNotes(); renderNotes()
