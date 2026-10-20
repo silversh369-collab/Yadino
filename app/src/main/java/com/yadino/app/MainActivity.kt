@@ -16,6 +16,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.graphics.drawable.StateListDrawable
 import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.net.Uri
@@ -62,11 +63,11 @@ private const val AUDIO_PERMISSION_CODE = 7002
 private const val NOTIFICATION_PERMISSION_CODE = 7003
 
 // رنگ‌های تم لاکچری
-private const val COLOR_BG = "#0A0A0A"         // مشکی عمیق
-private const val COLOR_CARD = "#181818"       // خاکستری تیره
-private const val COLOR_CARD_BORDER = "#2A2A2A" // حاشیه کارت
-private const val COLOR_GOLD = "#D4AF37"       // طلایی
-private const val COLOR_GOLD_DARK = "#AA8B2B"  // طلایی تیره برای گرادیانت
+private const val COLOR_BG_TOP = "#1A1A1A"      // خاکستری خیلی تیره برای بالای صفحه
+private const val COLOR_BG_BOTTOM = "#050505"   // مشکی مطلق برای پایین صفحه
+private const val COLOR_CARD = "#181818"        // رنگ کارت‌ها
+private const val COLOR_GOLD = "#D4AF37"        // طلایی
+private const val COLOR_GOLD_DARK = "#AA8B2B"   // طلایی تیره
 private const val COLOR_TEXT_PRIMARY = "#FFFFFF"
 private const val COLOR_TEXT_SECONDARY = "#A0A0A0"
 
@@ -171,41 +172,44 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ===================================================================
-    // دیزاین لاکچری + افکت‌ها + قاب طلایی
+    // دیزاین لاکچری + ظرافت‌های خاص
     // ===================================================================
     private fun buildScreen() {
+        // 🔧 پس‌زمینه گرادیانت برای کل صفحه
+        val rootBg = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(Color.parseColor(COLOR_BG_TOP), Color.parseColor(COLOR_BG_BOTTOM))
+        )
+
         val root = FrameLayout(this).apply {
-            setBackgroundColor(Color.parseColor(COLOR_BG))
+            background = rootBg
             layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
 
         mainScroll = ScrollView(this)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(40, 60, 40, 250)
+            setPadding(40, 60, 40, 300) // فاصله بیشتر از پایین برای FAB
         }
 
-        // 🔧 لوگوی طلایی با افکت گرادیانت (فلزی)
+        // 🔧 لوگوی طلایی با درخشش
         val titleTv = TextView(this).apply {
             text = "یادینو"
-            textSize = 44f
+            textSize = 48f
             gravity = Gravity.CENTER
             typeface = Typeface.create("sans-serif-black", Typeface.BOLD)
-            setPadding(0, 10, 0, 40)
+            letterSpacing = 0.05f
+            setPadding(0, 10, 0, 50)
+            // سایه درخشش طلایی
+            setShadowLayer(15f, 0f, 0f, Color.parseColor("#80D4AF37"))
         }
-        // اعمال گرادیانت طلایی بعد از رندر شدن ویو
         titleTv.post {
             val paint = titleTv.paint
             val width = paint.measureText(titleTv.text.toString())
             val shader = android.graphics.LinearGradient(
                 0f, 0f, width, titleTv.textSize,
-                intArrayOf(
-                    Color.parseColor("#F3E5AB"), // طلایی روشن
-                    Color.parseColor("#D4AF37"), // طلایی اصلی
-                    Color.parseColor("#AA8B2B")  // طلایی تیره
-                ),
-                null,
-                android.graphics.Shader.TileMode.CLAMP
+                intArrayOf(Color.parseColor("#F3E5AB"), Color.parseColor("#D4AF37"), Color.parseColor("#AA8B2B")),
+                null, android.graphics.Shader.TileMode.CLAMP
             )
             paint.shader = shader
             titleTv.invalidate()
@@ -217,20 +221,31 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
         }
 
-        // 🔧 استایل فیلدهای متنی با قاب طلایی
+        // 🔧 استایل فیلدها: حالت عادی تیره، حالت فوکوس قاب طلایی درخشان
         fun styleInput(editText: EditText) {
             editText.setTextColor(Color.parseColor(COLOR_TEXT_PRIMARY))
             editText.setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
             
-            val bg = GradientDrawable().apply {
-                setColor(Color.parseColor(COLOR_CARD))
-                cornerRadius = 30f
-                setStroke(4, Color.parseColor(COLOR_GOLD)) // قاب طلایی (ضخامت ۴)
+            val states = StateListDrawable()
+            
+            // حالت فوکوس (وقتی کاربر کلیک میکنه)
+            val focusedBg = GradientDrawable().apply {
+                setColor(Color.parseColor("#222222")) // کمی روشن تر
+                cornerRadius = 35f
+                setStroke(3, Color.parseColor(COLOR_GOLD))
             }
-            // افکت موج طلایی شفاف
-            val ripple = RippleDrawable(ColorStateList.valueOf(Color.parseColor("#55D4AF37")), bg, null)
-            editText.background = ripple
-            editText.setPadding(30, 30, 30, 30)
+            // حالت عادی (وقتی کلیک نشده)
+            val normalBg = GradientDrawable().apply {
+                setColor(Color.parseColor(COLOR_CARD))
+                cornerRadius = 35f
+                setStroke(1, Color.parseColor("#333333")) // قاب خاکستری خیلی ظریف
+            }
+            
+            states.addState(intArrayOf(android.R.attr.state_focused), focusedBg)
+            states.addState(intArrayOf(), normalBg)
+            
+            editText.background = states
+            editText.setPadding(35, 35, 35, 35)
             editText.textSize = 16f
         }
 
@@ -260,7 +275,7 @@ class MainActivity : AppCompatActivity() {
         taskInput.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) speechTarget = taskInput }
         formContainer.addView(taskInput, matchWidth())
 
-        // دکمه‌های طلایی
+        // دکمه‌های کپسولی طلایی (Pill shaped)
         fun createGoldButton(text: String, onClick: () -> Unit): Button {
             return Button(this).apply {
                 this.text = text
@@ -269,11 +284,11 @@ class MainActivity : AppCompatActivity() {
                 typeface = Typeface.DEFAULT_BOLD
                 
                 val gradient = GradientDrawable(
-                    GradientDrawable.Orientation.TL_BR, 
+                    GradientDrawable.Orientation.LEFT_RIGHT, 
                     intArrayOf(Color.parseColor(COLOR_GOLD), Color.parseColor(COLOR_GOLD_DARK))
-                ).apply { cornerRadius = 30f }
+                ).apply { cornerRadius = 100f } // گوشه‌های کاملاً گرد
                 
-                val ripple = RippleDrawable(ColorStateList.valueOf(Color.parseColor("#33000000")), gradient, null)
+                val ripple = RippleDrawable(ColorStateList.valueOf(Color.parseColor("#55000000")), gradient, null)
                 background = ripple
                 
                 setOnClickListener { view ->
@@ -334,11 +349,12 @@ class MainActivity : AppCompatActivity() {
         mainScroll.addView(content)
         root.addView(mainScroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
+        // دکمه شناور (FAB) با سایه و درخشش
         val fab = FloatingActionButton(this).apply {
             setImageResource(android.R.drawable.ic_input_add)
-            imageTintList = ColorStateList.valueOf(Color.parseColor(COLOR_BG)) 
+            imageTintList = ColorStateList.valueOf(Color.parseColor(COLOR_BG_BOTTOM)) 
             backgroundTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
-            compatElevation = 20f
+            compatElevation = 25f // سایه بیشتر
             
             setOnClickListener { view ->
                 view.animate().rotation(90f).setDuration(200).withEndAction {
@@ -348,7 +364,7 @@ class MainActivity : AppCompatActivity() {
                 }.start()
             }
         }
-        val fabParams = FrameLayout.LayoutParams(160, 160).apply { 
+        val fabParams = FrameLayout.LayoutParams(170, 170).apply { 
             gravity = Gravity.BOTTOM or Gravity.START
             setMargins(50, 50, 50, 50) 
         }
@@ -379,6 +395,9 @@ class MainActivity : AppCompatActivity() {
         noteAdapter.updateData(visibleNotes)
     }
 
+    // ===================================================================
+    // آداپتر کارت‌ها
+    // ===================================================================
     inner class NoteAdapter(
         private var items: List<Note>,
         private val onClick: (Note) -> Unit,
@@ -403,9 +422,9 @@ class MainActivity : AppCompatActivity() {
                     bottomMargin = 30
                 }
                 radius = 40f
-                cardElevation = 15f
-                strokeWidth = 2
-                strokeColor = Color.parseColor(COLOR_CARD_BORDER)
+                cardElevation = 20f
+                strokeWidth = 1
+                strokeColor = Color.parseColor("#44D4AF37") // حاشیه طلایی خیلی محو
                 setCardBackgroundColor(Color.parseColor(COLOR_CARD))
                 rippleColor = ColorStateList.valueOf(Color.parseColor("#33D4AF37"))
                 isClickable = true
@@ -493,6 +512,9 @@ class MainActivity : AppCompatActivity() {
         override fun getItemCount() = items.size
     }
 
+    // ===================================================================
+    // منطق میکروفون و دیتابیس (همون قبلی)
+    // ===================================================================
     private fun toggleVoiceInput(offline: Boolean) {
         if (continuousSpeech) stopContinuousSpeech()
         else {
