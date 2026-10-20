@@ -113,6 +113,7 @@ class MainActivity : AppCompatActivity() {
     private var transientErrorCount = 0
     private var pendingVoiceTarget: EditText? = null
     private var pendingVoiceContinuous = false
+    private var isUsingOnDevice = false // فلگ برای تشخیص موتور آفلاین یا آنلاین
 
     private val ringtonePickerLauncher =
         registerForActivityResult(
@@ -888,7 +889,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ===================================================================
-    // ورودی صوتی
+    // ورودی صوتی و مدیریت هوشمند خطای زبان (کد ۱۲)
     // ===================================================================
     private fun toggleVoiceInput(target: EditText, continuous: Boolean) {
         if (continuousSpeech) {
@@ -937,16 +938,25 @@ class MainActivity : AppCompatActivity() {
         transientErrorCount = 0
 
         speechRecognizer?.destroy()
-        speechRecognizer =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
-            ) {
-                SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
-            } else {
-                SpeechRecognizer.createSpeechRecognizer(this)
-            }
+        
+        // 🔧 استراتژی جدید: اول آفلاین رو امتحان کن (اگه گوشی پشتیبانی کنه)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
+        ) {
+            isUsingOnDevice = true
+            speechRecognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
+        } else {
+            isUsingOnDevice = false
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        }
 
-        speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+        speechRecognizer?.setRecognitionListener(createSpeechListener())
+        launchRecognizer()
+    }
+
+    // جدا کردن Listener به یک تابع مجزا برای دسترسی در زمان سوییچ کردن
+    private fun createSpeechListener(): RecognitionListener {
+        return object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
                 runOnUiThread {
                     statusText.text = if (continuousSpeech) {
@@ -963,8 +973,28 @@ class MainActivity : AppCompatActivity() {
 
             override fun onError(error: Int) {
                 isListening = false
-                Log.d(TAG, "Speech error: $error")
+                Log.d(TAG, "Speech error: $error (OnDevice: $isUsingOnDevice)")
 
+                // 🔧 راه‌حل خطای ۱۲: اگر موتور آفلاین از فارسی پشتیبانی نمی‌کرد، برو سراغ آنلاین
+                if (error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED || 
+                    error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE) {
+                    
+                    if (isUsingOnDevice) {
+                        Log.w(TAG, "On-device recognizer failed for Persian. Switching to online...")
+                        runOnUiThread {
+                            Toast.makeText(this@MainActivity, "حالت آفلاین از فارسی پشتیبانی نمی‌کند. اتصال به سرور...", Toast.LENGTH_SHORT).show()
+                        }
+                        isUsingOnDevice = false
+                        speechRecognizer?.destroy()
+                        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this@MainActivity)
+                        // مجدداً همین Listener را وصل می‌کنیم
+                        speechRecognizer?.setRecognitionListener(this)
+                        launchRecognizer()
+                        return
+                    }
+                }
+
+                // مدیریت خطاهای عادی
                 if (!continuousSpeech || !speechRestartRequested) {
                     if (::statusText.isInitialized) {
                         statusText.text = "تشخیص گفتار پایان یافت."
@@ -978,25 +1008,12 @@ class MainActivity : AppCompatActivity() {
                 val busyRecoverable = error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
                     error == SpeechRecognizer.ERROR_TOO_MANY_REQUESTS
 
-                val transientRecoverable = error == SpeechRecognizer.ERROR_CLIENT ||
-                    error == SpeechRecognizer.ERROR_AUDIO ||
-                    error == SpeechRecognizer.ERROR_SERVER ||
-                    error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED ||
-                    error == SpeechRecognizer.ERROR_NETWORK ||
-                    error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT
-
                 val fatal = error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ||
-                    error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED ||
-                    error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE ||
                     error == SpeechRecognizer.ERROR_CANNOT_CHECK_SUPPORT
 
                 if (fatal) {
                     Log.e(TAG, "Fatal speech error: $error")
-                    Toast.makeText(
-                        this@MainActivity,
-                        "خطای غیرقابل جبران در تشخیص گفتار (کد $error)",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    Toast.makeText(this@MainActivity, "خطای غیرقابل جبران در تشخیص گفتار (کد $error)", Toast.LENGTH_LONG).show()
                     stopContinuousSpeech()
                     return
                 }
@@ -1006,12 +1023,7 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     transientErrorCount++
                     if (transientErrorCount > 40) {
-                        Log.w(TAG, "Too many retries, stopping")
-                        Toast.makeText(
-                            this@MainActivity,
-                            "تشخیص گفتار پیوسته پس از چند تلاش متوقف شد.",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        Toast.makeText(this@MainActivity, "تشخیص گفتار پیوسته پس از چند تلاش متوقف شد.", Toast.LENGTH_SHORT).show()
                         stopContinuousSpeech()
                         return
                     }
@@ -1079,9 +1091,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
-        })
-
-        launchRecognizer()
+        }
     }
 
     private fun launchRecognizer() {
