@@ -42,6 +42,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen // 🔧 ایمپورت دقیق برای Splash Screen
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.security.crypto.EncryptedSharedPreferences
@@ -153,8 +154,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // 🔧 استفاده از مسیر کامل برای جلوگیری از ارور
-        androidx.core.splashscreen.SplashScreen.installSplashScreen(this)
+        // 🔧 فراخوانی استاندارد و بدون ارور
+        installSplashScreen()
         
         super.onCreate(savedInstanceState)
         try {
