@@ -136,6 +136,9 @@ class MainActivity : AppCompatActivity() {
     private var selectedRepeatCount = 0
     private var selectedRepeatInterval = 60
     private var selectedRingtoneUri = ""
+    
+    // 🔧 متغیری برای نگه داشتن آیدی یادداشتی که باید تعویق بشه
+    private var pendingSnoozeNoteId: String? = null
 
     private var speechRecognizer: SpeechRecognizer? = null
     private var continuousSpeech = false
@@ -162,6 +165,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 🔧 بررسی اگر اپ از طریق دکمه تعویق باز شده است
+        if (intent?.action == "SHOW_SNOOZE_DIALOG") {
+            pendingSnoozeNoteId = intent.getStringExtra("note_id")
+        }
+
         var keepSplash = true
         val splashScreen = installSplashScreen()
         splashScreen.setKeepOnScreenCondition { keepSplash }
@@ -179,6 +187,16 @@ class MainActivity : AppCompatActivity() {
             Log.e(TAG, "Startup failed", e)
             Toast.makeText(this, "خطا در راه‌اندازی", Toast.LENGTH_LONG).show()
             finish()
+        }
+    }
+
+    // 🔧 بررسی اگر اپ در حال اجراست و از طریق دکمه تعویق فراخوانی شده
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        if (intent?.action == "SHOW_SNOOZE_DIALOG") {
+            val id = intent.getStringExtra("note_id")
+            val note = notes.find { it.id == id }
+            if (note != null) showSnoozeDialog(note)
         }
     }
 
@@ -354,7 +372,7 @@ class MainActivity : AppCompatActivity() {
             background = null
             setOnClickListener { 
                 formContainer.visibility = View.GONE
-                fab.show() // نمایش دکمه شناور
+                fab.show()
                 clearForm() 
             }
         }, matchWidth())
@@ -395,7 +413,7 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { view ->
                 view.animate().rotation(90f).setDuration(200).withEndAction {
                     formContainer.visibility = View.VISIBLE
-                    fab.hide() // مخفی کردن دکمه شناور هنگام باز شدن فرم
+                    fab.hide()
                     mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) }
                     view.animate().rotation(0f).setDuration(0).start()
                 }.start()
@@ -823,6 +841,50 @@ class MainActivity : AppCompatActivity() {
         }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show()
     }
 
+    // ===================================================================
+    // 🔧 دیالوگ تعویق (Snooze) با انتخاب زمان
+    // ===================================================================
+    private fun showSnoozeDialog(note: Note) {
+        val options = arrayOf("۵ دقیقه دیگر", "۱۰ دقیقه دیگر", "۱۵ دقیقه دیگر", "۳۰ دقیقه دیگر", "۱ ساعت دیگر", "انتخاب زمان دلخواه...")
+        val minutes = intArrayOf(5, 10, 15, 30, 60)
+
+        AlertDialog.Builder(this)
+            .setTitle("تعویق یادآور")
+            .setItems(options) { _, which ->
+                if (which == 5) {
+                    // زمان دلخواه
+                    val now = Calendar.getInstance()
+                    TimePickerDialog(this, { _, h, min ->
+                        val snoozeTime = Calendar.getInstance().apply {
+                            set(Calendar.HOUR_OF_DAY, h)
+                            set(Calendar.MINUTE, min)
+                            set(Calendar.SECOND, 0)
+                        }
+                        // اگر زمان انتخابی گذشته بود، برای فردا تنظیم کن
+                        if (snoozeTime.timeInMillis <= System.currentTimeMillis()) {
+                            snoozeTime.add(Calendar.DAY_OF_MONTH, 1)
+                        }
+                        applySnooze(note, snoozeTime.timeInMillis)
+                    }, now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), true).show()
+                } else {
+                    // زمان‌های سریع
+                    val delay = minutes[which]
+                    applySnooze(note, System.currentTimeMillis() + (delay * 60000L))
+                }
+            }
+            .setNegativeButton("لغو", null)
+            .show()
+    }
+
+    private fun applySnooze(note: Note, newTime: Long) {
+        note.reminderAt = newTime
+        note.reminderEnabled = true
+        scheduleReminder(note)
+        saveNotes()
+        renderNotes()
+        Toast.makeText(this, "یادآور مجدداً تنظیم شد.", Toast.LENGTH_SHORT).show()
+    }
+
     private fun toggleVoiceInput(offline: Boolean) {
         if (continuousSpeech) {
             stopContinuousSpeech()
@@ -1179,11 +1241,17 @@ class MainActivity : AppCompatActivity() {
                 notes.add(Note(id = o.optString("id").ifBlank { UUID.randomUUID().toString() }, title = o.optString("title"), body = o.optString("body"), category = o.optString("category", "عمومی"), isPrivate = o.optBoolean("private", false), colorHex = o.optString("colorHex", ""), tasks = t, reminderAt = o.optLong("reminderAt", 0L), reminderEnabled = o.optBoolean("reminderEnabled", false), repeatMode = o.optString("repeatMode", "none"), repeatCount = o.optInt("repeatCount", 0), repeatIntervalMinutes = o.optInt("repeatIntervalMinutes", 60), ringtoneUri = o.optString("ringtoneUri", ""), reminderFiredCount = o.optInt("reminderFiredCount", 0)))
             }
         } catch (e: Exception) { Log.e(TAG, "Load fail", e) }
+        
+        // 🔧 اگر از طریق نوتیفیکیشن دکمه تعویق زده شده بود، دیالوگ رو نشون بده
+        pendingSnoozeNoteId?.let { id ->
+            val note = notes.find { it.id == id }
+            if (note != null) {
+                showSnoozeDialog(note)
+            }
+            pendingSnoozeNoteId = null
+        }
     }
 
-    // ===================================================================
-    // 🔧 دیالوگ‌های اختصاصی PIN با تم تاریک (جایگزین AlertDialog پیش‌فرض)
-    // ===================================================================
     private fun showSetPinDialog(onSuccess: () -> Unit) {
         val dialog = Dialog(this)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -1308,9 +1376,6 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    // ===================================================================
-    // توابع تبدیل تاریخ شمسی و میلادی
-    // ===================================================================
     private fun jalaliToGregorian(jY: Int, jM: Int, jD: Int): IntArray {
         var jy = jY - 979
         var jm = jM - 1
@@ -1385,12 +1450,22 @@ class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val noteId = intent.getStringExtra("note_id") ?: return
 
-        if (intent.action == "STOP_ALARM") {
+        // 🔧 اضافه شدن دکمه تعویق
+        if (intent.action == "STOP_ALARM" || intent.action == "SNOOZE_ALARM") {
             try {
                 mediaPlayer?.let { if (it.isPlaying) it.stop(); it.release() }
                 mediaPlayer = null
                 NotificationManagerCompat.from(context).cancel(noteId.hashCode())
             } catch (e: Exception) {}
+            
+            if (intent.action == "SNOOZE_ALARM") {
+                val openIntent = Intent(context, MainActivity::class.java).apply {
+                    action = "SHOW_SNOOZE_DIALOG"
+                    putExtra("note_id", noteId)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
+                context.startActivity(openIntent)
+            }
             return
         }
 
@@ -1412,12 +1487,21 @@ class ReminderReceiver : BroadcastReceiver() {
         }
         val stopPi = PendingIntent.getBroadcast(context, noteId.hashCode() + 1, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
+        // 🔧 ساخت PendingIntent برای تعویق
+        val snoozeIntent = Intent(context, ReminderReceiver::class.java).apply {
+            action = "SNOOZE_ALARM"
+            putExtra("note_id", noteId)
+        }
+        val snoozePi = PendingIntent.getBroadcast(context, noteId.hashCode() + 2, snoozeIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
         val builder = NotificationCompat.Builder(context, ch)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            // 🔧 اضافه شدن دکمه‌ها
+            .addAction(android.R.drawable.ic_menu_recent_history, "تعویق", snoozePi)
             .addAction(android.R.drawable.ic_delete, "توقف صدا", stopPi)
             .setOngoing(true)
             .setAutoCancel(false)
