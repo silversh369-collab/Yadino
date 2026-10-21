@@ -19,6 +19,7 @@ import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
 import android.graphics.drawable.StateListDrawable
 import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
@@ -42,7 +43,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen // 🔧 ایمپورت دقیق برای Splash Screen
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.security.crypto.EncryptedSharedPreferences
@@ -154,9 +155,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // 🔧 فراخوانی استاندارد و بدون ارور
-        installSplashScreen()
+        // 🔧 تنظیم زمان ماندن صفحه لودینگ
+        var keepSplash = true
+        val splashScreen = installSplashScreen()
+        splashScreen.setKeepOnScreenCondition { keepSplash }
         
+        // صفحه لودینگ ۲ ثانیه می‌مونه
+        Handler(Looper.getMainLooper()).postDelayed({ keepSplash = false }, 2000)
+
         super.onCreate(savedInstanceState)
         try {
             initializeSecureStorage()
@@ -325,6 +331,11 @@ class MainActivity : AppCompatActivity() {
         formContainer.addView(micStatusText, matchWidth())
 
         formContainer.addView(createGoldButton("تنظیم یادآور") { configureReminder() }, matchWidth())
+        
+        // 🔧 بازگرداندن دکمه دستیار هوشمند
+        formContainer.addView(createGoldButton("🤖 دستیار هوشمند") { 
+            Toast.makeText(this, "قابلیت هوش مصنوعی به زودی فعال می‌شود...", Toast.LENGTH_SHORT).show() 
+        }, matchWidth())
 
         reminderSummary = TextView(this).apply { 
             text = REMINDER_NONE_TEXT
@@ -422,6 +433,9 @@ class MainActivity : AppCompatActivity() {
         noteAdapter.updateData(visibleNotes)
     }
 
+    // ===================================================================
+    // 🔧 آداپتر بازگشته با قابلیت تیک زدن و نمایش یادآور (با حفظ امنیت)
+    // ===================================================================
     inner class NoteAdapter(
         private var items: List<Note>,
         private val onClick: (Note) -> Unit,
@@ -432,7 +446,10 @@ class MainActivity : AppCompatActivity() {
             val card: MaterialCardView, 
             val title: TextView, 
             val category: TextView,
-            val hint: TextView
+            val hint: TextView,
+            val tasksLayout: LinearLayout,
+            val progressText: TextView,
+            val reminderText: TextView
         ) : RecyclerView.ViewHolder(card)
 
         fun updateData(newItems: List<Note>) {
@@ -467,14 +484,21 @@ class MainActivity : AppCompatActivity() {
             
             val innerLayout = card.getChildAt(0) as LinearLayout
             val title = TextView(parent.context).apply { textSize = 20f; typeface = Typeface.DEFAULT_BOLD }
-            val category = TextView(parent.context).apply { textSize = 13f; setPadding(0, 10, 0, 10) }
-            val hint = TextView(parent.context).apply { textSize = 11f; setPadding(0, 15, 0, 0) }
+            val category = TextView(parent.context).apply { textSize = 13f; setPadding(0, 10, 0, 5) }
+            val hint = TextView(parent.context).apply { textSize = 11f; setPadding(0, 5, 0, 0) }
+            
+            val progressText = TextView(parent.context).apply { textSize = 12f; setTextColor(Color.parseColor(COLOR_GOLD)); setPadding(0, 5, 0, 5) }
+            val reminderText = TextView(parent.context).apply { textSize = 12f; setTextColor(Color.parseColor("#4CAF50")); setPadding(0, 5, 0, 10) }
+            val tasksLayout = LinearLayout(parent.context).apply { orientation = LinearLayout.VERTICAL }
             
             innerLayout.addView(title)
             innerLayout.addView(category)
             innerLayout.addView(hint)
+            innerLayout.addView(progressText)
+            innerLayout.addView(reminderText)
+            innerLayout.addView(tasksLayout)
             
-            return ViewHolder(card, title, category, hint)
+            return ViewHolder(card, title, category, hint, tasksLayout, progressText, reminderText)
         }
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
@@ -493,14 +517,61 @@ class MainActivity : AppCompatActivity() {
             holder.category.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
             holder.category.text = "دسته: ${note.category}"
 
+            // 🔧 منطق مخفی کاری و نمایش جزئیات
             if (note.isPrivate) {
+                // اگر خصوصی بود، هیچی نشون نده
                 holder.hint.text = "برای مشاهده، رمز عبور را وارد کنید"
                 holder.hint.setTextColor(Color.parseColor(COLOR_GOLD))
+                holder.hint.visibility = View.VISIBLE
+                holder.progressText.visibility = View.GONE
+                holder.reminderText.visibility = View.GONE
+                holder.tasksLayout.visibility = View.GONE
             } else {
-                holder.hint.text = "برای مشاهده و ویرایش کلیک کنید"
-                holder.hint.setTextColor(Color.parseColor("#666666"))
+                // اگر عادی بود، همه چیز رو نشون بده
+                holder.hint.visibility = View.GONE
+                
+                // نمایش یادآور
+                if (note.reminderEnabled && note.reminderAt > 0) {
+                    holder.reminderText.visibility = View.VISIBLE
+                    val date = SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()).format(note.reminderAt)
+                    holder.reminderText.text = "🔔 یادآور: $date"
+                } else {
+                    holder.reminderText.visibility = View.GONE
+                }
+
+                // نمایش تیک‌ها
+                if (note.tasks.isNotEmpty()) {
+                    holder.tasksLayout.visibility = View.VISIBLE
+                    holder.progressText.visibility = View.VISIBLE
+                    holder.tasksLayout.removeAllViews()
+
+                    fun updateProgressUI() {
+                        val done = note.tasks.count { it.done }
+                        holder.progressText.text = "پیشرفت: $done از ${note.tasks.size}"
+                    }
+                    updateProgressUI()
+
+                    note.tasks.forEach { task ->
+                        val cb = CheckBox(holder.card.context).apply {
+                            text = task.text
+                            isChecked = task.done
+                            setTextColor(textColor)
+                            buttonTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
+                            setOnCheckedChangeListener { _, checked ->
+                                task.done = checked
+                                updateProgressUI() // آپدیت آنی عدد
+                                saveNotes()        // ذخیره بی صدا
+                            }
+                        }
+                        holder.tasksLayout.addView(cb)
+                    }
+                } else {
+                    holder.tasksLayout.visibility = View.GONE
+                    holder.progressText.visibility = View.GONE
+                }
             }
 
+            // انیمیشن ورود
             holder.card.alpha = 0f
             holder.card.translationY = 50f
             holder.card.animate()
@@ -522,6 +593,9 @@ class MainActivity : AppCompatActivity() {
         override fun getItemCount() = items.size
     }
 
+    // ===================================================================
+    // منطق میکروفون
+    // ===================================================================
     private fun toggleVoiceInput(offline: Boolean) {
         if (continuousSpeech) {
             stopContinuousSpeech()
@@ -894,9 +968,28 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
+// =====================================================================
+// 🔧 BroadcastReceiver با قابلیت پخش حلقه‌ای صدا (تا زمانی که کاربر قطع کنه)
+// =====================================================================
 class ReminderReceiver : BroadcastReceiver() {
+
+    companion object {
+        var mediaPlayer: MediaPlayer? = null
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         val noteId = intent.getStringExtra("note_id") ?: return
+
+        // 🔧 چک کردن دستور توقف (وقتی کاربر دکمه توقف روی اعلان رو می‌زنه)
+        if (intent.action == "STOP_ALARM") {
+            try {
+                mediaPlayer?.let { if (it.isPlaying) it.stop(); it.release() }
+                mediaPlayer = null
+                NotificationManagerCompat.from(context).cancel(noteId.hashCode())
+            } catch (e: Exception) {}
+            return
+        }
+
         val title = intent.getStringExtra("note_title") ?: "یادآور"
         val body = intent.getStringExtra("note_body").orEmpty()
         val repeatMode = intent.getStringExtra("repeat_mode") ?: "none"
@@ -908,18 +1001,57 @@ class ReminderReceiver : BroadcastReceiver() {
         val isCustom = ringtone.isNotBlank() && ringtone != "silent"
         val isSilent = ringtone == "silent"
         val ch = if (isCustom || isSilent) CHANNEL_ID_SILENT else CHANNEL_ID
-        val builder = NotificationCompat.Builder(context, ch).setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle(title).setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(body)).setPriority(NotificationCompat.PRIORITY_HIGH).setAutoCancel(true)
+
+        // 🔧 ساخت دکمه توقف برای اعلان
+        val stopIntent = Intent(context, ReminderReceiver::class.java).apply {
+            action = "STOP_ALARM"
+            putExtra("note_id", noteId)
+        }
+        val stopPi = PendingIntent.getBroadcast(context, noteId.hashCode() + 1, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        val builder = NotificationCompat.Builder(context, ch)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .addAction(android.R.drawable.ic_delete, "توقف صدا", stopPi)
+            .setOngoing(true) // کاربر نمیتونه با کشیدن پاکش کنه
+            .setAutoCancel(false)
+
         val canNotify = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         val pr = goAsync()
-        if (canNotify) try { NotificationManagerCompat.from(context).notify(noteId.hashCode(), builder.build()) } catch (_: Exception) {}
         
-        if (isCustom && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (canNotify) {
+            try { NotificationManagerCompat.from(context).notify(noteId.hashCode(), builder.build()) } catch (_: Exception) {}
+        }
+        
+        // 🔧 پخش صدا با MediaPlayer (به صورت لوپ بی‌نهایت)
+        if (!isSilent) {
             try {
-                val r = RingtoneManager.getRingtone(context, Uri.parse(ringtone))
-                if (r != null) { r.audioAttributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build(); r.play(); Handler(Looper.getMainLooper()).postDelayed({ r.stop(); pr.finish() }, 5000) } else pr.finish()
-            } catch (_: Exception) { pr.finish() }
-        } else pr.finish()
+                mediaPlayer?.release() // آزادسازی پلیر قبلی
+                val uriToPlay = if (isCustom) Uri.parse(ringtone) else RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
 
+                mediaPlayer = MediaPlayer().apply {
+                    setDataSource(context, uriToPlay)
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .setUsage(AudioAttributes.USAGE_ALARM) // استفاده از مسیر آلارم برای صدای بلند
+                            .build()
+                    )
+                    isLooping = true // 🎵 حلقه بی‌نهایت
+                    prepare()
+                    start()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "MediaPlayer error: ${e.message}")
+            }
+        }
+        
+        pr.finish() // ریسیور کارش رو تموم کرد، ولی MediaPlayer توی بک‌گراند داره پخش میشه
+
+        // ---- زمان‌بندی تکرار بعدی ----
         val next = when (repeatMode) {
             "daily" -> System.currentTimeMillis() + 86400000L
             "weekly" -> System.currentTimeMillis() + 604800000L
@@ -929,10 +1061,18 @@ class ReminderReceiver : BroadcastReceiver() {
             else -> 0L
         }
         if (next > System.currentTimeMillis()) {
-            val ni = Intent(context, ReminderReceiver::class.java).apply { putExtra("note_id", noteId); putExtra("note_title", title); putExtra("note_body", body); putExtra("repeat_mode", repeatMode); putExtra("repeat_count", repeatCount); putExtra("repeat_interval", interval); putExtra("fired_count", firedCount + 1); putExtra("ringtone_uri", ringtone) }
+            val ni = Intent(context, ReminderReceiver::class.java).apply { 
+                putExtra("note_id", noteId); putExtra("note_title", title); putExtra("note_body", body); 
+                putExtra("repeat_mode", repeatMode); putExtra("repeat_count", repeatCount); 
+                putExtra("repeat_interval", interval); putExtra("fired_count", firedCount + 1); 
+                putExtra("ringtone_uri", ringtone) 
+            }
             val pi = PendingIntent.getBroadcast(context, noteId.hashCode(), ni, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            try { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, pi) else am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, pi) } catch (_: Exception) {}
+            try { 
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, pi) 
+                else am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, pi) 
+            } catch (_: Exception) {}
         }
     }
 }
