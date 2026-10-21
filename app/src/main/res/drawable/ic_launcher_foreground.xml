@@ -1,6 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<scale xmlns:android="http://schemas.android.com/apk/res/android"
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
     android:drawable="@drawable/yadino_logo"
-    android:scaleGravity="center"
-    android:scaleWidth="65%"
-    android:scaleHeight="65%" />
+    android:inset="25%" />
