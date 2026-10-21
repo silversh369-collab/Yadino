@@ -137,7 +137,6 @@ class MainActivity : AppCompatActivity() {
     private var selectedRepeatInterval = 60
     private var selectedRingtoneUri = ""
     
-    // 🔧 متغیری برای نگه داشتن آیدی یادداشتی که باید تعویق بشه
     private var pendingSnoozeNoteId: String? = null
 
     private var speechRecognizer: SpeechRecognizer? = null
@@ -165,7 +164,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // 🔧 بررسی اگر اپ از طریق دکمه تعویق باز شده است
         if (intent?.action == "SHOW_SNOOZE_DIALOG") {
             pendingSnoozeNoteId = intent.getStringExtra("note_id")
         }
@@ -190,10 +188,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 🔧 بررسی اگر اپ در حال اجراست و از طریق دکمه تعویق فراخوانی شده
-    override fun onNewIntent(intent: Intent?) {
+    // 🔧 اصلاح شد: Intent بدون علامت سوال
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (intent?.action == "SHOW_SNOOZE_DIALOG") {
+        if (intent.action == "SHOW_SNOOZE_DIALOG") {
             val id = intent.getStringExtra("note_id")
             val note = notes.find { it.id == id }
             if (note != null) showSnoozeDialog(note)
@@ -841,9 +839,6 @@ class MainActivity : AppCompatActivity() {
         }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show()
     }
 
-    // ===================================================================
-    // 🔧 دیالوگ تعویق (Snooze) با انتخاب زمان
-    // ===================================================================
     private fun showSnoozeDialog(note: Note) {
         val options = arrayOf("۵ دقیقه دیگر", "۱۰ دقیقه دیگر", "۱۵ دقیقه دیگر", "۳۰ دقیقه دیگر", "۱ ساعت دیگر", "انتخاب زمان دلخواه...")
         val minutes = intArrayOf(5, 10, 15, 30, 60)
@@ -852,7 +847,6 @@ class MainActivity : AppCompatActivity() {
             .setTitle("تعویق یادآور")
             .setItems(options) { _, which ->
                 if (which == 5) {
-                    // زمان دلخواه
                     val now = Calendar.getInstance()
                     TimePickerDialog(this, { _, h, min ->
                         val snoozeTime = Calendar.getInstance().apply {
@@ -860,14 +854,12 @@ class MainActivity : AppCompatActivity() {
                             set(Calendar.MINUTE, min)
                             set(Calendar.SECOND, 0)
                         }
-                        // اگر زمان انتخابی گذشته بود، برای فردا تنظیم کن
                         if (snoozeTime.timeInMillis <= System.currentTimeMillis()) {
                             snoozeTime.add(Calendar.DAY_OF_MONTH, 1)
                         }
                         applySnooze(note, snoozeTime.timeInMillis)
                     }, now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), true).show()
                 } else {
-                    // زمان‌های سریع
                     val delay = minutes[which]
                     applySnooze(note, System.currentTimeMillis() + (delay * 60000L))
                 }
@@ -1242,7 +1234,6 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (e: Exception) { Log.e(TAG, "Load fail", e) }
         
-        // 🔧 اگر از طریق نوتیفیکیشن دکمه تعویق زده شده بود، دیالوگ رو نشون بده
         pendingSnoozeNoteId?.let { id ->
             val note = notes.find { it.id == id }
             if (note != null) {
@@ -1450,7 +1441,6 @@ class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val noteId = intent.getStringExtra("note_id") ?: return
 
-        // 🔧 اضافه شدن دکمه تعویق
         if (intent.action == "STOP_ALARM" || intent.action == "SNOOZE_ALARM") {
             try {
                 mediaPlayer?.let { if (it.isPlaying) it.stop(); it.release() }
@@ -1487,7 +1477,6 @@ class ReminderReceiver : BroadcastReceiver() {
         }
         val stopPi = PendingIntent.getBroadcast(context, noteId.hashCode() + 1, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
-        // 🔧 ساخت PendingIntent برای تعویق
         val snoozeIntent = Intent(context, ReminderReceiver::class.java).apply {
             action = "SNOOZE_ALARM"
             putExtra("note_id", noteId)
@@ -1500,7 +1489,6 @@ class ReminderReceiver : BroadcastReceiver() {
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            // 🔧 اضافه شدن دکمه‌ها
             .addAction(android.R.drawable.ic_menu_recent_history, "تعویق", snoozePi)
             .addAction(android.R.drawable.ic_delete, "توقف صدا", stopPi)
             .setOngoing(true)
