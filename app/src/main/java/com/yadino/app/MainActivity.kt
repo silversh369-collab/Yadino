@@ -78,7 +78,6 @@ private const val COLOR_TEXT_SECONDARY = "#A0A0A0"
 
 private const val REMINDER_NONE_TEXT = "یادآور تنظیم نشده است"
 
-// نام ماه‌های شمسی
 private val persianMonths = arrayOf(
     "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
     "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"
@@ -125,6 +124,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var mainScroll: ScrollView
     private lateinit var securePrefs: android.content.SharedPreferences
 
+    private lateinit var fab: FloatingActionButton
     private lateinit var micStatusText: TextView
     private lateinit var micButton: Button
     private var blinkAnimation: AlphaAnimation? = null
@@ -352,7 +352,11 @@ class MainActivity : AppCompatActivity() {
             text = "انصراف"
             setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
             background = null
-            setOnClickListener { formContainer.visibility = View.GONE; clearForm() }
+            setOnClickListener { 
+                formContainer.visibility = View.GONE
+                fab.show() // نمایش دکمه شناور
+                clearForm() 
+            }
         }, matchWidth())
 
         content.addView(formContainer)
@@ -382,7 +386,7 @@ class MainActivity : AppCompatActivity() {
         mainScroll.addView(content)
         root.addView(mainScroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
-        val fab = FloatingActionButton(this).apply {
+        fab = FloatingActionButton(this).apply {
             setImageResource(android.R.drawable.ic_input_add)
             imageTintList = ColorStateList.valueOf(Color.parseColor(COLOR_BG_BOTTOM)) 
             backgroundTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
@@ -391,6 +395,7 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { view ->
                 view.animate().rotation(90f).setDuration(200).withEndAction {
                     formContainer.visibility = View.VISIBLE
+                    fab.hide() // مخفی کردن دکمه شناور هنگام باز شدن فرم
                     mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) }
                     view.animate().rotation(0f).setDuration(0).start()
                 }.start()
@@ -398,7 +403,7 @@ class MainActivity : AppCompatActivity() {
         }
         val fabParams = FrameLayout.LayoutParams(170, 170).apply { 
             gravity = Gravity.BOTTOM or Gravity.START
-            setMargins(50, 50, 50, 200) 
+            setMargins(50, 50, 50, 100) 
         }
         root.addView(fab, fabParams)
 
@@ -419,7 +424,11 @@ class MainActivity : AppCompatActivity() {
         }.also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
     }
 
-    private fun showForm() { formContainer.visibility = View.VISIBLE; mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) } }
+    private fun showForm() { 
+        formContainer.visibility = View.VISIBLE
+        fab.hide()
+        mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) } 
+    }
 
     private fun renderNotes() {
         val selectedCategory = if (::filterSpinner.isInitialized) filterSpinner.selectedItem?.toString() ?: "همه دسته‌ها" else "همه دسته‌ها"
@@ -695,9 +704,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ===================================================================
-    // 🔧 دیالوگ جدید تاریخ شمسی به همراه نمایش میلادی
-    // ===================================================================
     private fun configureReminder() {
         val currentCal = Calendar.getInstance().apply {
             if (selectedReminderAt > System.currentTimeMillis()) timeInMillis = selectedReminderAt
@@ -732,36 +738,31 @@ class MainActivity : AppCompatActivity() {
             typeface = Typeface.DEFAULT_BOLD
         })
 
-        // بخش انتخاب شمسی
         val spinnersRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             weightSum = 3f
         }
 
-        // روز
         val daySpinner = Spinner(this)
         val daysList = (1..31).map { it.toString() }
         daySpinner.adapter = spinnerAdapter(daysList)
         daySpinner.setSelection(jDate[2] - 1)
         spinnersRow.addView(daySpinner, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        // ماه
         val monthSpinner = Spinner(this)
         monthSpinner.adapter = spinnerAdapter(persianMonths.toList())
         monthSpinner.setSelection(jDate[1] - 1)
         spinnersRow.addView(monthSpinner, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        // سال
         val yearSpinner = Spinner(this)
         val yearsList = (jDate[0] - 5..jDate[0] + 10).map { it.toString() }
         yearSpinner.adapter = spinnerAdapter(yearsList)
-        yearSpinner.setSelection(5) // سال جاری
+        yearSpinner.setSelection(5)
         spinnersRow.addView(yearSpinner, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
         layout.addView(spinnersRow)
 
-        // متن نمایش میلادی
         val gregorianText = TextView(this).apply {
             textSize = 14f
             setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
@@ -770,7 +771,6 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(gregorianText)
 
-        // تابعی برای آپدیت میلادی وقتی اسپینرها عوض میشن
         fun updateGregorianText() {
             val d = daySpinner.selectedItem.toString().toInt()
             val m = monthSpinner.selectedItemPosition + 1
@@ -786,9 +786,8 @@ class MainActivity : AppCompatActivity() {
         daySpinner.onItemSelectedListener = listener
         monthSpinner.onItemSelectedListener = listener
         yearSpinner.onItemSelectedListener = listener
-        updateGregorianText() // فراخوانی اولیه
+        updateGregorianText()
 
-        // دکمه تایید
         layout.addView(Button(this).apply {
             text = "ادامه (انتخاب ساعت)"
             setTextColor(Color.BLACK)
@@ -998,7 +997,9 @@ class MainActivity : AppCompatActivity() {
         if (existing == null) notes.add(0, note)
         if (note.reminderEnabled && note.reminderAt > System.currentTimeMillis()) scheduleReminder(note) else cancelReminder(note.id)
 
-        saveNotes(); renderNotes(); clearForm(); formContainer.visibility = View.GONE
+        saveNotes(); renderNotes(); clearForm(); 
+        formContainer.visibility = View.GONE
+        fab.show()
         Toast.makeText(this, "ذخیره شد", Toast.LENGTH_SHORT).show()
     }
 
@@ -1180,24 +1181,135 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) { Log.e(TAG, "Load fail", e) }
     }
 
+    // ===================================================================
+    // 🔧 دیالوگ‌های اختصاصی PIN با تم تاریک (جایگزین AlertDialog پیش‌فرض)
+    // ===================================================================
     private fun showSetPinDialog(onSuccess: () -> Unit) {
-        val inp = EditText(this).apply { hint = "PIN جدید"; inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD; setTextColor(Color.WHITE) }
-        AlertDialog.Builder(this).setTitle("ساخت PIN").setView(inp).setNegativeButton("لغو", null).setPositiveButton("ذخیره") { _, _ ->
-            if (inp.text.length < 4) Toast.makeText(this, "حداقل ۴ رقم", Toast.LENGTH_SHORT).show()
-            else { securePrefs.edit().putString(PIN_KEY, MessageDigest.getInstance("SHA-256").digest(inp.text.toString().toByteArray()).joinToString("") { "%02x".format(it) }).apply(); onSuccess() }
-        }.show()
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(50, 50, 50, 50)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor(COLOR_CARD))
+                cornerRadius = 40f
+                setStroke(2, Color.parseColor(COLOR_GOLD))
+            }
+        }
+
+        content.addView(TextView(this).apply { 
+            text = "ساخت PIN جدید"; textSize = 18f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD; setPadding(0, 0, 0, 20)
+        })
+
+        val inp = EditText(this).apply { 
+            hint = "PIN (حداقل ۴ رقم)"
+            setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+            setTextColor(Color.WHITE)
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            background = GradientDrawable().apply { setColor(Color.parseColor("#202020")); cornerRadius = 20f; setStroke(1, Color.parseColor(COLOR_TEXT_SECONDARY)) }
+            setPadding(30, 30, 30, 30)
+        }
+        content.addView(inp)
+
+        val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 30, 0, 0) }
+        
+        btnRow.addView(Button(this).apply {
+            text = "لغو"
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply { setColor(Color.parseColor("#333333")); cornerRadius = 100f }
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 15 }
+            setOnClickListener { dialog.dismiss() }
+        })
+        
+        btnRow.addView(Button(this).apply {
+            text = "ذخیره"
+            setTextColor(Color.BLACK)
+            background = GradientDrawable().apply { setColor(Color.parseColor(COLOR_GOLD)); cornerRadius = 100f }
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener {
+                val pin = inp.text.toString()
+                if (pin.length < 4) {
+                    Toast.makeText(this@MainActivity, "حداقل ۴ رقم وارد کنید.", Toast.LENGTH_SHORT).show()
+                } else {
+                    securePrefs.edit().putString(PIN_KEY, MessageDigest.getInstance("SHA-256").digest(pin.toByteArray()).joinToString("") { "%02x".format(it) }).apply()
+                    dialog.dismiss()
+                    onSuccess()
+                }
+            }
+        })
+        content.addView(btnRow)
+
+        dialog.setContentView(content)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        dialog.show()
     }
 
     private fun requestPin(message: String, callback: (Boolean) -> Unit) {
-        val inp = EditText(this).apply { hint = "PIN"; inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD; setTextColor(Color.WHITE) }
-        AlertDialog.Builder(this).setTitle(message).setView(inp).setNegativeButton("لغو") { _, _ -> callback(false) }.setPositiveButton("تأیید") { _, _ ->
-            val hash = MessageDigest.getInstance("SHA-256").digest(inp.text.toString().toByteArray()).joinToString("") { "%02x".format(it) }
-            val ok = securePrefs.getString(PIN_KEY, null) == hash; if (!ok) Toast.makeText(this, "اشتباه", Toast.LENGTH_SHORT).show(); callback(ok)
-        }.show()
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(50, 50, 50, 50)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor(COLOR_CARD))
+                cornerRadius = 40f
+                setStroke(2, Color.parseColor(COLOR_GOLD))
+            }
+        }
+
+        content.addView(TextView(this).apply { 
+            text = message; textSize = 16f; setTextColor(Color.WHITE); setPadding(0, 0, 0, 20)
+        })
+
+        val inp = EditText(this).apply { 
+            hint = "PIN"
+            setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+            setTextColor(Color.WHITE)
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            background = GradientDrawable().apply { setColor(Color.parseColor("#202020")); cornerRadius = 20f; setStroke(1, Color.parseColor(COLOR_TEXT_SECONDARY)) }
+            setPadding(30, 30, 30, 30)
+        }
+        content.addView(inp)
+
+        val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 30, 0, 0) }
+        
+        btnRow.addView(Button(this).apply {
+            text = "لغو"
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply { setColor(Color.parseColor("#333333")); cornerRadius = 100f }
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 15 }
+            setOnClickListener { 
+                dialog.dismiss()
+                callback(false) 
+            }
+        })
+        
+        btnRow.addView(Button(this).apply {
+            text = "تأیید"
+            setTextColor(Color.BLACK)
+            background = GradientDrawable().apply { setColor(Color.parseColor(COLOR_GOLD)); cornerRadius = 100f }
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener {
+                val hash = MessageDigest.getInstance("SHA-256").digest(inp.text.toString().toByteArray()).joinToString("") { "%02x".format(it) }
+                val ok = securePrefs.getString(PIN_KEY, null) == hash
+                if (!ok) Toast.makeText(this@MainActivity, "PIN اشتباه است.", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+                callback(ok)
+            }
+        })
+        content.addView(btnRow)
+
+        dialog.setContentView(content)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        dialog.show()
     }
 
     // ===================================================================
-    // 🔧 توابع تبدیل تاریخ شمسی و میلادی (بدون نیاز به کتابخانه)
+    // توابع تبدیل تاریخ شمسی و میلادی
     // ===================================================================
     private fun jalaliToGregorian(jY: Int, jM: Int, jD: Int): IntArray {
         var jy = jY - 979
