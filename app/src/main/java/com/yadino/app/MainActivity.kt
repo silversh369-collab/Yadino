@@ -5,6 +5,7 @@ import android.app.Activity
 import android.app.AlarmManager
 import android.app.AlertDialog
 import android.app.DatePickerDialog
+import android.app.Dialog
 import android.app.PendingIntent
 import android.app.TimePickerDialog
 import android.content.BroadcastReceiver
@@ -34,6 +35,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.view.animation.AlphaAnimation
 import android.view.animation.Animation
 import android.view.animation.DecelerateInterpolator
@@ -155,12 +157,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // 🔧 تنظیم زمان ماندن صفحه لودینگ
         var keepSplash = true
         val splashScreen = installSplashScreen()
         splashScreen.setKeepOnScreenCondition { keepSplash }
-        
-        // صفحه لودینگ ۲ ثانیه می‌مونه
         Handler(Looper.getMainLooper()).postDelayed({ keepSplash = false }, 2000)
 
         super.onCreate(savedInstanceState)
@@ -331,8 +330,6 @@ class MainActivity : AppCompatActivity() {
         formContainer.addView(micStatusText, matchWidth())
 
         formContainer.addView(createGoldButton("تنظیم یادآور") { configureReminder() }, matchWidth())
-        
-        // 🔧 بازگرداندن دکمه دستیار هوشمند
         formContainer.addView(createGoldButton("🤖 دستیار هوشمند") { 
             Toast.makeText(this, "قابلیت هوش مصنوعی به زودی فعال می‌شود...", Toast.LENGTH_SHORT).show() 
         }, matchWidth())
@@ -371,15 +368,7 @@ class MainActivity : AppCompatActivity() {
         
         noteAdapter = NoteAdapter(
             items = notes,
-            onClick = { note ->
-                if (note.isPrivate) {
-                    requestPin("برای مشاهده یادداشت خصوصی، PIN را وارد کن") { valid -> 
-                        if (valid) { editNote(note); showForm() } 
-                    }
-                } else { 
-                    editNote(note); showForm() 
-                }
-            },
+            onClick = { note -> showNoteDetails(note) },
             onLongClick = { note -> showNoteOptionsMenu(note) }
         )
         notesRecyclerView.adapter = noteAdapter
@@ -434,7 +423,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ===================================================================
-    // 🔧 آداپتر بازگشته با قابلیت تیک زدن و نمایش یادآور (با حفظ امنیت)
+    // 🔧 آداپتر کارت‌ها (با برگرداندن متن و تیک‌ها و آپدیت آنی)
     // ===================================================================
     inner class NoteAdapter(
         private var items: List<Note>,
@@ -445,6 +434,7 @@ class MainActivity : AppCompatActivity() {
         inner class ViewHolder(
             val card: MaterialCardView, 
             val title: TextView, 
+            val bodyText: TextView,
             val category: TextView,
             val hint: TextView,
             val tasksLayout: LinearLayout,
@@ -484,21 +474,22 @@ class MainActivity : AppCompatActivity() {
             
             val innerLayout = card.getChildAt(0) as LinearLayout
             val title = TextView(parent.context).apply { textSize = 20f; typeface = Typeface.DEFAULT_BOLD }
-            val category = TextView(parent.context).apply { textSize = 13f; setPadding(0, 10, 0, 5) }
+            val bodyText = TextView(parent.context).apply { textSize = 14f; maxLines = 3; setPadding(0, 10, 0, 10) }
+            val category = TextView(parent.context).apply { textSize = 13f; setPadding(0, 5, 0, 5) }
             val hint = TextView(parent.context).apply { textSize = 11f; setPadding(0, 5, 0, 0) }
-            
             val progressText = TextView(parent.context).apply { textSize = 12f; setTextColor(Color.parseColor(COLOR_GOLD)); setPadding(0, 5, 0, 5) }
             val reminderText = TextView(parent.context).apply { textSize = 12f; setTextColor(Color.parseColor("#4CAF50")); setPadding(0, 5, 0, 10) }
             val tasksLayout = LinearLayout(parent.context).apply { orientation = LinearLayout.VERTICAL }
             
             innerLayout.addView(title)
+            innerLayout.addView(bodyText)
             innerLayout.addView(category)
             innerLayout.addView(hint)
             innerLayout.addView(progressText)
             innerLayout.addView(reminderText)
             innerLayout.addView(tasksLayout)
             
-            return ViewHolder(card, title, category, hint, tasksLayout, progressText, reminderText)
+            return ViewHolder(card, title, bodyText, category, hint, tasksLayout, progressText, reminderText)
         }
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
@@ -517,20 +508,20 @@ class MainActivity : AppCompatActivity() {
             holder.category.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
             holder.category.text = "دسته: ${note.category}"
 
-            // 🔧 منطق مخفی کاری و نمایش جزئیات
             if (note.isPrivate) {
-                // اگر خصوصی بود، هیچی نشون نده
                 holder.hint.text = "برای مشاهده، رمز عبور را وارد کنید"
                 holder.hint.setTextColor(Color.parseColor(COLOR_GOLD))
                 holder.hint.visibility = View.VISIBLE
+                holder.bodyText.visibility = View.GONE
                 holder.progressText.visibility = View.GONE
                 holder.reminderText.visibility = View.GONE
                 holder.tasksLayout.visibility = View.GONE
             } else {
-                // اگر عادی بود، همه چیز رو نشون بده
                 holder.hint.visibility = View.GONE
+                holder.bodyText.visibility = View.VISIBLE
+                holder.bodyText.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+                holder.bodyText.text = note.body 
                 
-                // نمایش یادآور
                 if (note.reminderEnabled && note.reminderAt > 0) {
                     holder.reminderText.visibility = View.VISIBLE
                     val date = SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()).format(note.reminderAt)
@@ -539,7 +530,7 @@ class MainActivity : AppCompatActivity() {
                     holder.reminderText.visibility = View.GONE
                 }
 
-                // نمایش تیک‌ها
+                // 🔧 نمایش کارها و چک باکس‌ها با آپدیت آنی
                 if (note.tasks.isNotEmpty()) {
                     holder.tasksLayout.visibility = View.VISIBLE
                     holder.progressText.visibility = View.VISIBLE
@@ -560,7 +551,7 @@ class MainActivity : AppCompatActivity() {
                             setOnCheckedChangeListener { _, checked ->
                                 task.done = checked
                                 updateProgressUI() // آپدیت آنی عدد
-                                saveNotes()        // ذخیره بی صدا
+                                saveNotes()        // ذخیره بی‌صدا
                             }
                         }
                         holder.tasksLayout.addView(cb)
@@ -571,7 +562,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // انیمیشن ورود
             holder.card.alpha = 0f
             holder.card.translationY = 50f
             holder.card.animate()
@@ -594,8 +584,122 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ===================================================================
-    // منطق میکروفون
+    // 🔧 صفحه مشاهده یادداشت (View Mode) با آپدیت آنی تیک‌ها
     // ===================================================================
+    private fun showNoteDetails(note: Note) {
+        val showDialog = {
+            val dialog = Dialog(this)
+            dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+            
+            val content = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(50, 50, 50, 50)
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor(COLOR_CARD))
+                    cornerRadius = 40f
+                    setStroke(2, Color.parseColor(COLOR_GOLD))
+                }
+            }
+            
+            val scroll = ScrollView(this).apply { addView(content) }
+
+            // عنوان
+            content.addView(TextView(this).apply { 
+                text = note.title; textSize = 22f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD 
+            })
+            
+            // دسته‌بندی
+            content.addView(TextView(this).apply { 
+                text = "دسته: ${note.category}"; textSize = 14f; setTextColor(Color.parseColor(COLOR_GOLD)); setPadding(0, 10, 0, 20) 
+            })
+            
+            // متن یادداشت
+            content.addView(TextView(this).apply { 
+                text = note.body; textSize = 16f; setTextColor(Color.WHITE); setLineSpacing(1.5f, 1.5f)
+            })
+
+            // یادآور
+            if (note.reminderEnabled && note.reminderAt > 0) {
+                val d = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(note.reminderAt)
+                content.addView(TextView(this).apply { 
+                    text = "🔔 یادآور: $d"; textSize = 14f; setTextColor(Color.parseColor("#4CAF50")); setPadding(0, 20, 0, 10) 
+                })
+            }
+
+            // کارها و پیشرفت
+            if (note.tasks.isNotEmpty()) {
+                content.addView(TextView(this).apply { 
+                    text = "کارها:"; textSize = 16f; setTextColor(Color.WHITE); setPadding(0, 20, 0, 10); typeface = Typeface.DEFAULT_BOLD
+                })
+
+                val progressTv = TextView(this).apply {
+                    textSize = 14f
+                    setTextColor(Color.parseColor(COLOR_GOLD))
+                    setPadding(0, 5, 0, 10)
+                }
+                
+                // تابع برای آپدیت آنی متن پیشرفت
+                fun updateDialogProgress() {
+                    val done = note.tasks.count { it.done }
+                    progressTv.text = "پیشرفت: $done از ${note.tasks.size}"
+                }
+                updateDialogProgress()
+                content.addView(progressTv)
+
+                note.tasks.forEach { task ->
+                    val cb = CheckBox(this).apply {
+                        text = task.text
+                        isChecked = task.done
+                        setTextColor(Color.WHITE)
+                        buttonTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
+                        setOnCheckedChangeListener { _, checked ->
+                            task.done = checked
+                            updateDialogProgress() // 🔧 آپدیت آنی عدد اینجا
+                            saveNotes()
+                        }
+                    }
+                    content.addView(cb)
+                }
+            }
+
+            // دکمه‌ها
+            val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 40, 0, 0) }
+            
+            btnRow.addView(Button(this).apply {
+                text = "ویرایش"
+                setTextColor(Color.BLACK)
+                background = GradientDrawable().apply { setColor(Color.parseColor(COLOR_GOLD)); cornerRadius = 100f }
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 15 }
+                setOnClickListener { 
+                    dialog.dismiss()
+                    editNote(note)
+                    showForm() 
+                }
+            })
+            
+            btnRow.addView(Button(this).apply {
+                text = "بستن"
+                setTextColor(Color.WHITE)
+                background = GradientDrawable().apply { setColor(Color.parseColor("#333333")); cornerRadius = 100f }
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                setOnClickListener { dialog.dismiss() }
+            })
+            
+            content.addView(btnRow)
+
+            dialog.setContentView(scroll)
+            dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+            dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            dialog.show()
+        }
+
+        if (note.isPrivate) {
+            requestPin("برای مشاهده یادداشت خصوصی، PIN را وارد کن") { valid -> if (valid) showDialog() }
+        } else {
+            showDialog()
+        }
+    }
+
     private fun toggleVoiceInput(offline: Boolean) {
         if (continuousSpeech) {
             stopContinuousSpeech()
@@ -969,10 +1073,9 @@ class MainActivity : AppCompatActivity() {
 }
 
 // =====================================================================
-// 🔧 BroadcastReceiver با قابلیت پخش حلقه‌ای صدا (تا زمانی که کاربر قطع کنه)
+// BroadcastReceiver برای آلارم و صدای حلقه‌ای
 // =====================================================================
 class ReminderReceiver : BroadcastReceiver() {
-
     companion object {
         var mediaPlayer: MediaPlayer? = null
     }
@@ -980,7 +1083,6 @@ class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val noteId = intent.getStringExtra("note_id") ?: return
 
-        // 🔧 چک کردن دستور توقف (وقتی کاربر دکمه توقف روی اعلان رو می‌زنه)
         if (intent.action == "STOP_ALARM") {
             try {
                 mediaPlayer?.let { if (it.isPlaying) it.stop(); it.release() }
@@ -1002,7 +1104,6 @@ class ReminderReceiver : BroadcastReceiver() {
         val isSilent = ringtone == "silent"
         val ch = if (isCustom || isSilent) CHANNEL_ID_SILENT else CHANNEL_ID
 
-        // 🔧 ساخت دکمه توقف برای اعلان
         val stopIntent = Intent(context, ReminderReceiver::class.java).apply {
             action = "STOP_ALARM"
             putExtra("note_id", noteId)
@@ -1016,7 +1117,7 @@ class ReminderReceiver : BroadcastReceiver() {
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .addAction(android.R.drawable.ic_delete, "توقف صدا", stopPi)
-            .setOngoing(true) // کاربر نمیتونه با کشیدن پاکش کنه
+            .setOngoing(true)
             .setAutoCancel(false)
 
         val canNotify = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -1026,10 +1127,9 @@ class ReminderReceiver : BroadcastReceiver() {
             try { NotificationManagerCompat.from(context).notify(noteId.hashCode(), builder.build()) } catch (_: Exception) {}
         }
         
-        // 🔧 پخش صدا با MediaPlayer (به صورت لوپ بی‌نهایت)
         if (!isSilent) {
             try {
-                mediaPlayer?.release() // آزادسازی پلیر قبلی
+                mediaPlayer?.release()
                 val uriToPlay = if (isCustom) Uri.parse(ringtone) else RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
 
                 mediaPlayer = MediaPlayer().apply {
@@ -1037,10 +1137,10 @@ class ReminderReceiver : BroadcastReceiver() {
                     setAudioAttributes(
                         AudioAttributes.Builder()
                             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                            .setUsage(AudioAttributes.USAGE_ALARM) // استفاده از مسیر آلارم برای صدای بلند
+                            .setUsage(AudioAttributes.USAGE_ALARM)
                             .build()
                     )
-                    isLooping = true // 🎵 حلقه بی‌نهایت
+                    isLooping = true
                     prepare()
                     start()
                 }
@@ -1049,9 +1149,8 @@ class ReminderReceiver : BroadcastReceiver() {
             }
         }
         
-        pr.finish() // ریسیور کارش رو تموم کرد، ولی MediaPlayer توی بک‌گراند داره پخش میشه
+        pr.finish()
 
-        // ---- زمان‌بندی تکرار بعدی ----
         val next = when (repeatMode) {
             "daily" -> System.currentTimeMillis() + 86400000L
             "weekly" -> System.currentTimeMillis() + 604800000L
