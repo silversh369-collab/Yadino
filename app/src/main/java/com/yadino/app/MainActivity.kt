@@ -3,7 +3,6 @@ package com.yadino.app
 import android.Manifest
 import android.app.Activity
 import android.app.AlarmManager
-import android.app.AlertDialog
 import android.app.Dialog
 import android.app.PendingIntent
 import android.app.TimePickerDialog
@@ -188,7 +187,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 🔧 اصلاح شد: Intent بدون علامت سوال
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (intent.action == "SHOW_SNOOZE_DIALOG") {
@@ -843,29 +841,25 @@ class MainActivity : AppCompatActivity() {
         val options = arrayOf("۵ دقیقه دیگر", "۱۰ دقیقه دیگر", "۱۵ دقیقه دیگر", "۳۰ دقیقه دیگر", "۱ ساعت دیگر", "انتخاب زمان دلخواه...")
         val minutes = intArrayOf(5, 10, 15, 30, 60)
 
-        AlertDialog.Builder(this)
-            .setTitle("تعویق یادآور")
-            .setItems(options) { _, which ->
-                if (which == 5) {
-                    val now = Calendar.getInstance()
-                    TimePickerDialog(this, { _, h, min ->
-                        val snoozeTime = Calendar.getInstance().apply {
-                            set(Calendar.HOUR_OF_DAY, h)
-                            set(Calendar.MINUTE, min)
-                            set(Calendar.SECOND, 0)
-                        }
-                        if (snoozeTime.timeInMillis <= System.currentTimeMillis()) {
-                            snoozeTime.add(Calendar.DAY_OF_MONTH, 1)
-                        }
-                        applySnooze(note, snoozeTime.timeInMillis)
-                    }, now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), true).show()
-                } else {
-                    val delay = minutes[which]
-                    applySnooze(note, System.currentTimeMillis() + (delay * 60000L))
-                }
+        showCustomListDialog("تعویق یادآور", options) { which ->
+            if (which == 5) {
+                val now = Calendar.getInstance()
+                TimePickerDialog(this, { _, h, min ->
+                    val snoozeTime = Calendar.getInstance().apply {
+                        set(Calendar.HOUR_OF_DAY, h)
+                        set(Calendar.MINUTE, min)
+                        set(Calendar.SECOND, 0)
+                    }
+                    if (snoozeTime.timeInMillis <= System.currentTimeMillis()) {
+                        snoozeTime.add(Calendar.DAY_OF_MONTH, 1)
+                    }
+                    applySnooze(note, snoozeTime.timeInMillis)
+                }, now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), true).show()
+            } else {
+                val delay = minutes[which]
+                applySnooze(note, System.currentTimeMillis() + (delay * 60000L))
             }
-            .setNegativeButton("لغو", null)
-            .show()
+        }
     }
 
     private fun applySnooze(note: Note, newTime: Long) {
@@ -877,32 +871,9 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "یادآور مجدداً تنظیم شد.", Toast.LENGTH_SHORT).show()
     }
 
-    private fun toggleVoiceInput(offline: Boolean) {
-        if (continuousSpeech) {
-            stopContinuousSpeech()
-            micStatusText.visibility = View.GONE
-            micButton.text = "🎤 شروع ضبط صدا"
-        } else {
-            isOfflineMode = offline
-            startVoiceInput()
-            micStatusText.visibility = View.VISIBLE
-            micStatusText.text = "صحبت کنید..."
-            micStatusText.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
-            micButton.text = "🛑 توقف ضبط"
-            
-            startBlinkingStatus()
-        }
-    }
-
-    private fun startBlinkingStatus() {
-        blinkAnimation = AlphaAnimation(0.3f, 1.0f).apply {
-            duration = 800
-            repeatCount = Animation.INFINITE
-            repeatMode = Animation.REVERSE
-        }
-        micStatusText.startAnimation(blinkAnimation)
-    }
-
+    // ===================================================================
+    // 🔧 تنظیمات میکروفون برای سرعت و حساسیت بالاتر
+    // ===================================================================
     private fun startVoiceInput() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), AUDIO_PERMISSION_CODE)
@@ -1001,9 +972,12 @@ class MainActivity : AppCompatActivity() {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000L)
+            
+            // 🔧 حساسیت و سرعت بالا
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 300L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 300L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 300L)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true) 
         }
         try { speechRecognizer?.startListening(intent) } catch (e: Exception) { isListening = false }
     }
@@ -1087,7 +1061,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showNoteOptionsMenu(note: Note) {
         val options = arrayOf("🎨 تغییر رنگ", "🗑️ حذف")
-        AlertDialog.Builder(this).setTitle("تنظیمات").setItems(options) { _, which ->
+        showCustomListDialog("تنظیمات", options) { which ->
             if (which == 0) {
                 if (note.isPrivate) {
                     requestPin("برای تغییر رنگ یادداشت خصوصی، PIN را وارد کن") { valid -> if (valid) showColorPicker(note) }
@@ -1095,27 +1069,27 @@ class MainActivity : AppCompatActivity() {
             } else {
                 confirmDelete(note)
             }
-        }.show()
+        }
     }
 
     private fun showColorPicker(note: Note) {
         val colors = arrayOf("#181818", "#2B1010", "#1A2A15", "#15203B", "#2A1B38")
         val names = arrayOf("پیش‌فرض", "قرمز تیره", "سبز تیره", "آبی تیره", "بنفش تیره")
-        AlertDialog.Builder(this).setTitle("رنگ").setItems(names) { _, w ->
+        showCustomListDialog("انتخاب رنگ", names) { w ->
             note.colorHex = colors[w]; saveNotes(); renderNotes()
-        }.show()
+        }
     }
 
     private fun confirmDelete(note: Note) {
-        val del = { AlertDialog.Builder(this).setTitle("حذف").setMessage("حذف شود؟").setNegativeButton("نه", null).setPositiveButton("بله") { _, _ ->
+        val del = { showCustomConfirmDialog("حذف", "آیا از حذف این یادداشت مطمئن هستید؟") {
             cancelReminder(note.id); notes.removeAll { it.id == note.id }; saveNotes(); renderNotes()
-        }.show() }
+        } }
         if (note.isPrivate) requestPin("برای حذف یادداشت خصوصی، PIN را وارد کن") { if (it) del() } else del()
     }
 
     private fun configureRepeatOptions() {
         val choices = arrayOf("بدون تکرار", "روزانه", "هفتگی", "ماهانه", "دلخواه", "محدود")
-        AlertDialog.Builder(this).setTitle("تکرار").setItems(choices) { _, w ->
+        showCustomListDialog("تکرار", choices) { w ->
             when (w) {
                 0 -> { selectedRepeatMode = "none"; chooseRingtone() }
                 1 -> { selectedRepeatMode = "daily"; chooseRingtone() }
@@ -1124,26 +1098,24 @@ class MainActivity : AppCompatActivity() {
                 4 -> configureCustomInterval()
                 5 -> configureRepeatCount()
             }
-        }.show()
+        }
     }
 
     private fun configureCustomInterval() {
-        val inp = EditText(this).apply { hint = "دقیقه"; inputType = InputType.TYPE_CLASS_NUMBER; setText(selectedRepeatInterval.toString()) }
-        AlertDialog.Builder(this).setTitle("فاصله").setView(inp).setPositiveButton("OK") { _, _ ->
-            selectedRepeatInterval = inp.text.toString().toIntOrNull() ?: 60; selectedRepeatMode = "interval"; chooseRingtone()
-        }.show()
+        showCustomInputDialog("فاصله", "دقیقه", selectedRepeatInterval.toString()) { text ->
+            selectedRepeatInterval = text.toIntOrNull() ?: 60; selectedRepeatMode = "interval"; chooseRingtone()
+        }
     }
 
     private fun configureRepeatCount() {
-        val inp = EditText(this).apply { hint = "دفعات"; inputType = InputType.TYPE_CLASS_NUMBER; setText("3") }
-        AlertDialog.Builder(this).setTitle("تعداد").setView(inp).setPositiveButton("OK") { _, _ ->
-            selectedRepeatCount = (inp.text.toString().toIntOrNull() ?: 3).coerceIn(1, 100); selectedRepeatMode = "count"; chooseRingtone()
-        }.show()
+        showCustomInputDialog("تعداد", "دفعات", "3") { text ->
+            selectedRepeatCount = (text.toIntOrNull() ?: 3).coerceIn(1, 100); selectedRepeatMode = "count"; chooseRingtone()
+        }
     }
 
     private fun chooseRingtone() {
         val opts = arrayOf("پیش‌فرض", "از گوشی", "بی‌صدا")
-        AlertDialog.Builder(this).setTitle("صدا").setItems(opts) { _, w ->
+        showCustomListDialog("صدا", opts) { w ->
             when (w) {
                 0 -> { selectedRingtoneUri = ""; updateReminderSummary() }
                 1 -> { ringtonePickerLauncher.launch(Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
@@ -1152,7 +1124,7 @@ class MainActivity : AppCompatActivity() {
                 }) }
                 2 -> { selectedRingtoneUri = "silent"; updateReminderSummary() }
             }
-        }.show()
+        }
     }
 
     private fun updateReminderSummary() {
@@ -1362,6 +1334,182 @@ class MainActivity : AppCompatActivity() {
         content.addView(btnRow)
 
         dialog.setContentView(content)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        dialog.show()
+    }
+
+    private fun showCustomListDialog(title: String, items: Array<String>, onItemSelected: (Int) -> Unit) {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(50, 50, 50, 50)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor(COLOR_CARD))
+                cornerRadius = 40f
+                setStroke(2, Color.parseColor(COLOR_GOLD))
+            }
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+
+        layout.addView(TextView(this).apply {
+            text = title
+            textSize = 20f
+            setTextColor(Color.parseColor(COLOR_GOLD))
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 30)
+            typeface = Typeface.DEFAULT_BOLD
+        })
+
+        val listLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        items.forEachIndexed { index, item ->
+            val btn = TextView(this).apply {
+                text = item
+                textSize = 16f
+                setTextColor(Color.WHITE)
+                setPadding(30, 40, 30, 40)
+                gravity = Gravity.CENTER
+                background = RippleDrawable(ColorStateList.valueOf(Color.parseColor("#33D4AF37")), null, null)
+                setOnClickListener {
+                    dialog.dismiss()
+                    onItemSelected(index)
+                }
+            }
+            listLayout.addView(btn)
+            if (index < items.size - 1) {
+                listLayout.addView(View(this).apply {
+                    setBackgroundColor(Color.parseColor("#333333"))
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
+                })
+            }
+        }
+
+        layout.addView(listLayout)
+        dialog.setContentView(layout)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        dialog.show()
+    }
+
+    private fun showCustomInputDialog(title: String, hint: String, initialText: String, onConfirm: (String) -> Unit) {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(50, 50, 50, 50)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor(COLOR_CARD))
+                cornerRadius = 40f
+                setStroke(2, Color.parseColor(COLOR_GOLD))
+            }
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+
+        layout.addView(TextView(this).apply {
+            text = title
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, 0, 20)
+        })
+
+        val inp = EditText(this).apply {
+            this.hint = hint
+            setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+            setTextColor(Color.WHITE)
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(initialText)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#202020"))
+                cornerRadius = 20f
+                setStroke(1, Color.parseColor(COLOR_TEXT_SECONDARY))
+            }
+            setPadding(30, 30, 30, 30)
+        }
+        layout.addView(inp)
+
+        val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 30, 0, 0) }
+        btnRow.addView(Button(this).apply {
+            text = "لغو"
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply { setColor(Color.parseColor("#333333")); cornerRadius = 100f }
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 15 }
+            setOnClickListener { dialog.dismiss() }
+        })
+        btnRow.addView(Button(this).apply {
+            text = "تأیید"
+            setTextColor(Color.BLACK)
+            background = GradientDrawable().apply { setColor(Color.parseColor(COLOR_GOLD)); cornerRadius = 100f }
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener {
+                dialog.dismiss()
+                onConfirm(inp.text.toString())
+            }
+        })
+        layout.addView(btnRow)
+
+        dialog.setContentView(layout)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        dialog.show()
+    }
+
+    private fun showCustomConfirmDialog(title: String, message: String, onConfirm: () -> Unit) {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(50, 50, 50, 50)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor(COLOR_CARD))
+                cornerRadius = 40f
+                setStroke(2, Color.parseColor(COLOR_GOLD))
+            }
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+
+        layout.addView(TextView(this).apply {
+            text = title
+            textSize = 20f
+            setTextColor(Color.parseColor(COLOR_GOLD))
+            gravity = Gravity.CENTER
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, 0, 20)
+        })
+
+        layout.addView(TextView(this).apply {
+            text = message
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 30)
+        })
+
+        val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        btnRow.addView(Button(this).apply {
+            text = "نه"
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply { setColor(Color.parseColor("#333333")); cornerRadius = 100f }
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 15 }
+            setOnClickListener { dialog.dismiss() }
+        })
+        btnRow.addView(Button(this).apply {
+            text = "بله"
+            setTextColor(Color.BLACK)
+            background = GradientDrawable().apply { setColor(Color.parseColor(COLOR_GOLD)); cornerRadius = 100f }
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener {
+                dialog.dismiss()
+                onConfirm()
+            }
+        })
+        layout.addView(btnRow)
+
+        dialog.setContentView(layout)
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
         dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         dialog.show()
