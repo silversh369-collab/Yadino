@@ -1,13 +1,15 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- تم اصلی برنامه -->
     <style name="Base.Theme.Yadino" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="android:statusBarColor">#0A0A0A</item>
         <item name="android:navigationBarColor">#0A0A0A</item>
     </style>
 
+    <!-- 🔧 تم صفحه لودینگ (Splash) با عکس فیت شده -->
     <style name="Theme.Yadino.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">#0A0A0A</item>
-        <!-- اگر عکس پاک شد، فعلا اینجا رو بذار روی @mipmap/ic_launcher تا کرش نکنه -->
-        <item name="windowSplashScreenAnimatedIcon">@drawable/yadino_logo</item> 
+        <!-- اینجا از ic_launcher_foreground استفاده کردیم که حاشیه داره -->
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
         <item name="windowSplashScreenAnimationDuration">1000</item>
         <item name="postSplashScreenTheme">@style/Base.Theme.Yadino</item>
     </style>
