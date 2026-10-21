@@ -200,7 +200,8 @@ class MainActivity : AppCompatActivity() {
         mainScroll = ScrollView(this)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(40, 60, 40, 300)
+            // 🔧 افزایش فاصله از پایین به 450 تا حتی با اسکرول هم دکمه روی لیست نیفته
+            setPadding(40, 60, 40, 450)
         }
 
         val titleTv = TextView(this).apply {
@@ -391,9 +392,10 @@ class MainActivity : AppCompatActivity() {
                 }.start()
             }
         }
+        // 🔧 تغییر مارجین پایین از 50 به 200 برای بالا اومدن دکمه و عدم تداخل
         val fabParams = FrameLayout.LayoutParams(170, 170).apply { 
             gravity = Gravity.BOTTOM or Gravity.START
-            setMargins(50, 50, 50, 50) 
+            setMargins(50, 50, 50, 200) 
         }
         root.addView(fab, fabParams)
 
@@ -422,9 +424,6 @@ class MainActivity : AppCompatActivity() {
         noteAdapter.updateData(visibleNotes)
     }
 
-    // ===================================================================
-    // 🔧 آداپتر کارت‌ها (با برگرداندن متن و تیک‌ها و آپدیت آنی)
-    // ===================================================================
     inner class NoteAdapter(
         private var items: List<Note>,
         private val onClick: (Note) -> Unit,
@@ -530,7 +529,6 @@ class MainActivity : AppCompatActivity() {
                     holder.reminderText.visibility = View.GONE
                 }
 
-                // 🔧 نمایش کارها و چک باکس‌ها با آپدیت آنی
                 if (note.tasks.isNotEmpty()) {
                     holder.tasksLayout.visibility = View.VISIBLE
                     holder.progressText.visibility = View.VISIBLE
@@ -550,8 +548,8 @@ class MainActivity : AppCompatActivity() {
                             buttonTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
                             setOnCheckedChangeListener { _, checked ->
                                 task.done = checked
-                                updateProgressUI() // آپدیت آنی عدد
-                                saveNotes()        // ذخیره بی‌صدا
+                                updateProgressUI()
+                                saveNotes()
                             }
                         }
                         holder.tasksLayout.addView(cb)
@@ -583,9 +581,6 @@ class MainActivity : AppCompatActivity() {
         override fun getItemCount() = items.size
     }
 
-    // ===================================================================
-    // 🔧 صفحه مشاهده یادداشت (View Mode) با آپدیت آنی تیک‌ها
-    // ===================================================================
     private fun showNoteDetails(note: Note) {
         val showDialog = {
             val dialog = Dialog(this)
@@ -603,22 +598,18 @@ class MainActivity : AppCompatActivity() {
             
             val scroll = ScrollView(this).apply { addView(content) }
 
-            // عنوان
             content.addView(TextView(this).apply { 
                 text = note.title; textSize = 22f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD 
             })
             
-            // دسته‌بندی
             content.addView(TextView(this).apply { 
                 text = "دسته: ${note.category}"; textSize = 14f; setTextColor(Color.parseColor(COLOR_GOLD)); setPadding(0, 10, 0, 20) 
             })
             
-            // متن یادداشت
             content.addView(TextView(this).apply { 
                 text = note.body; textSize = 16f; setTextColor(Color.WHITE); setLineSpacing(1.5f, 1.5f)
             })
 
-            // یادآور
             if (note.reminderEnabled && note.reminderAt > 0) {
                 val d = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(note.reminderAt)
                 content.addView(TextView(this).apply { 
@@ -626,7 +617,6 @@ class MainActivity : AppCompatActivity() {
                 })
             }
 
-            // کارها و پیشرفت
             if (note.tasks.isNotEmpty()) {
                 content.addView(TextView(this).apply { 
                     text = "کارها:"; textSize = 16f; setTextColor(Color.WHITE); setPadding(0, 20, 0, 10); typeface = Typeface.DEFAULT_BOLD
@@ -638,7 +628,6 @@ class MainActivity : AppCompatActivity() {
                     setPadding(0, 5, 0, 10)
                 }
                 
-                // تابع برای آپدیت آنی متن پیشرفت
                 fun updateDialogProgress() {
                     val done = note.tasks.count { it.done }
                     progressTv.text = "پیشرفت: $done از ${note.tasks.size}"
@@ -654,7 +643,7 @@ class MainActivity : AppCompatActivity() {
                         buttonTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
                         setOnCheckedChangeListener { _, checked ->
                             task.done = checked
-                            updateDialogProgress() // 🔧 آپدیت آنی عدد اینجا
+                            updateDialogProgress()
                             saveNotes()
                         }
                     }
@@ -662,7 +651,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // دکمه‌ها
             val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 40, 0, 0) }
             
             btnRow.addView(Button(this).apply {
@@ -1072,9 +1060,6 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
-// =====================================================================
-// BroadcastReceiver برای آلارم و صدای حلقه‌ای
-// =====================================================================
 class ReminderReceiver : BroadcastReceiver() {
     companion object {
         var mediaPlayer: MediaPlayer? = null
