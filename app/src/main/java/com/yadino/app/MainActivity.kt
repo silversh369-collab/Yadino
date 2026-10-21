@@ -4,7 +4,6 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlarmManager
 import android.app.AlertDialog
-import android.app.DatePickerDialog
 import android.app.Dialog
 import android.app.PendingIntent
 import android.app.TimePickerDialog
@@ -78,6 +77,12 @@ private const val COLOR_TEXT_PRIMARY = "#FFFFFF"
 private const val COLOR_TEXT_SECONDARY = "#A0A0A0"
 
 private const val REMINDER_NONE_TEXT = "یادآور تنظیم نشده است"
+
+// نام ماه‌های شمسی
+private val persianMonths = arrayOf(
+    "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
+    "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"
+)
 
 data class Task(
     val id: String = UUID.randomUUID().toString(),
@@ -200,7 +205,6 @@ class MainActivity : AppCompatActivity() {
         mainScroll = ScrollView(this)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            // 🔧 افزایش فاصله از پایین به 450 تا حتی با اسکرول هم دکمه روی لیست نیفته
             setPadding(40, 60, 40, 450)
         }
 
@@ -392,7 +396,6 @@ class MainActivity : AppCompatActivity() {
                 }.start()
             }
         }
-        // 🔧 تغییر مارجین پایین از 50 به 200 برای بالا اومدن دکمه و عدم تداخل
         val fabParams = FrameLayout.LayoutParams(170, 170).apply { 
             gravity = Gravity.BOTTOM or Gravity.START
             setMargins(50, 50, 50, 200) 
@@ -523,8 +526,10 @@ class MainActivity : AppCompatActivity() {
                 
                 if (note.reminderEnabled && note.reminderAt > 0) {
                     holder.reminderText.visibility = View.VISIBLE
-                    val date = SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()).format(note.reminderAt)
-                    holder.reminderText.text = "🔔 یادآور: $date"
+                    val cal = Calendar.getInstance().apply { timeInMillis = note.reminderAt }
+                    val jDate = gregorianToJalali(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH))
+                    val timeStr = SimpleDateFormat("HH:mm", Locale.getDefault()).format(note.reminderAt)
+                    holder.reminderText.text = "🔔 یادآور: ${jDate[2]}/${jDate[1]} - $timeStr"
                 } else {
                     holder.reminderText.visibility = View.GONE
                 }
@@ -611,9 +616,11 @@ class MainActivity : AppCompatActivity() {
             })
 
             if (note.reminderEnabled && note.reminderAt > 0) {
-                val d = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(note.reminderAt)
+                val cal = Calendar.getInstance().apply { timeInMillis = note.reminderAt }
+                val jDate = gregorianToJalali(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH))
+                val timeStr = SimpleDateFormat("HH:mm", Locale.getDefault()).format(note.reminderAt)
                 content.addView(TextView(this).apply { 
-                    text = "🔔 یادآور: $d"; textSize = 14f; setTextColor(Color.parseColor("#4CAF50")); setPadding(0, 20, 0, 10) 
+                    text = "🔔 یادآور: ${jDate[2]}/${jDate[1]}/${jDate[0]} ساعت $timeStr"; textSize = 14f; setTextColor(Color.parseColor("#4CAF50")); setPadding(0, 20, 0, 10) 
                 })
             }
 
@@ -686,6 +693,135 @@ class MainActivity : AppCompatActivity() {
         } else {
             showDialog()
         }
+    }
+
+    // ===================================================================
+    // 🔧 دیالوگ جدید تاریخ شمسی به همراه نمایش میلادی
+    // ===================================================================
+    private fun configureReminder() {
+        val currentCal = Calendar.getInstance().apply {
+            if (selectedReminderAt > System.currentTimeMillis()) timeInMillis = selectedReminderAt
+            else add(Calendar.MINUTE, 5)
+        }
+        val gYear = currentCal.get(Calendar.YEAR)
+        val gMonth = currentCal.get(Calendar.MONTH) + 1
+        val gDay = currentCal.get(Calendar.DAY_OF_MONTH)
+        
+        val jDate = gregorianToJalali(gYear, gMonth, gDay)
+
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(50, 50, 50, 50)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor(COLOR_CARD))
+                cornerRadius = 40f
+                setStroke(2, Color.parseColor(COLOR_GOLD))
+            }
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+
+        layout.addView(TextView(this).apply {
+            text = "انتخاب تاریخ (شمسی)"
+            textSize = 20f
+            setTextColor(Color.parseColor(COLOR_GOLD))
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 30)
+            typeface = Typeface.DEFAULT_BOLD
+        })
+
+        // بخش انتخاب شمسی
+        val spinnersRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            weightSum = 3f
+        }
+
+        // روز
+        val daySpinner = Spinner(this)
+        val daysList = (1..31).map { it.toString() }
+        daySpinner.adapter = spinnerAdapter(daysList)
+        daySpinner.setSelection(jDate[2] - 1)
+        spinnersRow.addView(daySpinner, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        // ماه
+        val monthSpinner = Spinner(this)
+        monthSpinner.adapter = spinnerAdapter(persianMonths.toList())
+        monthSpinner.setSelection(jDate[1] - 1)
+        spinnersRow.addView(monthSpinner, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        // سال
+        val yearSpinner = Spinner(this)
+        val yearsList = (jDate[0] - 5..jDate[0] + 10).map { it.toString() }
+        yearSpinner.adapter = spinnerAdapter(yearsList)
+        yearSpinner.setSelection(5) // سال جاری
+        spinnersRow.addView(yearSpinner, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        layout.addView(spinnersRow)
+
+        // متن نمایش میلادی
+        val gregorianText = TextView(this).apply {
+            textSize = 14f
+            setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+            gravity = Gravity.CENTER
+            setPadding(0, 20, 0, 30)
+        }
+        layout.addView(gregorianText)
+
+        // تابعی برای آپدیت میلادی وقتی اسپینرها عوض میشن
+        fun updateGregorianText() {
+            val d = daySpinner.selectedItem.toString().toInt()
+            val m = monthSpinner.selectedItemPosition + 1
+            val y = yearSpinner.selectedItem.toString().toInt()
+            val g = jalaliToGregorian(y, m, d)
+            gregorianText.text = "معادل میلادی: ${g[0]}/${g[1].toString().padStart(2, '0')}/${g[2].toString().padStart(2, '0')}"
+        }
+
+        val listener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) { updateGregorianText() }
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+        daySpinner.onItemSelectedListener = listener
+        monthSpinner.onItemSelectedListener = listener
+        yearSpinner.onItemSelectedListener = listener
+        updateGregorianText() // فراخوانی اولیه
+
+        // دکمه تایید
+        layout.addView(Button(this).apply {
+            text = "ادامه (انتخاب ساعت)"
+            setTextColor(Color.BLACK)
+            background = GradientDrawable().apply { setColor(Color.parseColor(COLOR_GOLD)); cornerRadius = 100f }
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setOnClickListener {
+                val selD = daySpinner.selectedItem.toString().toInt()
+                val selM = monthSpinner.selectedItemPosition + 1
+                val selY = yearSpinner.selectedItem.toString().toInt()
+                val g = jalaliToGregorian(selY, selM, selD)
+                
+                dialog.dismiss()
+                showTimePicker(g[0], g[1], g[2])
+            }
+        })
+
+        dialog.setContentView(layout)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        dialog.show()
+    }
+
+    private fun showTimePicker(year: Int, month: Int, day: Int) {
+        val cal = Calendar.getInstance()
+        if (selectedReminderAt > System.currentTimeMillis()) cal.timeInMillis = selectedReminderAt
+        
+        TimePickerDialog(this, { _, h, min ->
+            cal.set(year, month - 1, day, h, min, 0)
+            cal.set(Calendar.MILLISECOND, 0)
+            selectedReminderAt = cal.timeInMillis
+            selectedReminderEnabled = true
+            configureRepeatOptions()
+        }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show()
     }
 
     private fun toggleVoiceInput(offline: Boolean) {
@@ -884,7 +1020,14 @@ class MainActivity : AppCompatActivity() {
         selectedReminderAt = note.reminderAt; selectedReminderEnabled = note.reminderEnabled
         selectedRepeatMode = note.repeatMode; selectedRepeatCount = note.repeatCount
         selectedRepeatInterval = note.repeatIntervalMinutes; selectedRingtoneUri = note.ringtoneUri
-        reminderSummary.text = if (note.reminderEnabled && note.reminderAt > 0) "فعال: " + SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()).format(note.reminderAt) else REMINDER_NONE_TEXT
+        
+        if (note.reminderEnabled && note.reminderAt > 0) {
+            val cal = Calendar.getInstance().apply { timeInMillis = note.reminderAt }
+            val jDate = gregorianToJalali(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH))
+            reminderSummary.text = "فعال: ${jDate[2]}/${jDate[1]}/${jDate[0]} ساعت ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(note.reminderAt)}"
+        } else {
+            reminderSummary.text = REMINDER_NONE_TEXT
+        }
     }
 
     private fun showNoteOptionsMenu(note: Note) {
@@ -913,17 +1056,6 @@ class MainActivity : AppCompatActivity() {
             cancelReminder(note.id); notes.removeAll { it.id == note.id }; saveNotes(); renderNotes()
         }.show() }
         if (note.isPrivate) requestPin("برای حذف یادداشت خصوصی، PIN را وارد کن") { if (it) del() } else del()
-    }
-
-    private fun configureReminder() {
-        val cal = Calendar.getInstance().apply { if (selectedReminderAt > System.currentTimeMillis()) timeInMillis = selectedReminderAt else { add(Calendar.MINUTE, 5); set(Calendar.SECOND, 0) } }
-        DatePickerDialog(this, { _, y, m, d ->
-            cal.set(y, m, d)
-            TimePickerDialog(this, { _, h, min ->
-                cal.set(Calendar.HOUR_OF_DAY, h); cal.set(Calendar.MINUTE, min); cal.set(Calendar.SECOND, 0)
-                selectedReminderAt = cal.timeInMillis; selectedReminderEnabled = true; configureRepeatOptions()
-            }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show()
-        }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
     }
 
     private fun configureRepeatOptions() {
@@ -969,12 +1101,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateReminderSummary() {
-        reminderSummary.text = if (selectedReminderEnabled && selectedReminderAt > 0) {
-            val d = SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()).format(selectedReminderAt)
+        if (selectedReminderEnabled && selectedReminderAt > 0) {
+            val cal = Calendar.getInstance().apply { timeInMillis = selectedReminderAt }
+            val jDate = gregorianToJalali(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH))
+            val timeStr = SimpleDateFormat("HH:mm", Locale.getDefault()).format(selectedReminderAt)
+            
             val r = when (selectedRepeatMode) { "daily" -> "روزانه"; "weekly" -> "هفتگی"; "monthly" -> "ماهانه"; "interval" -> "هر $selectedRepeatInterval د"; "count" -> "$selectedRepeatCount بار"; else -> "بدون" }
             val s = when { selectedRingtoneUri.isBlank() -> "پیش‌فرض"; selectedRingtoneUri == "silent" -> "بی‌صدا"; else -> "دلخواه" }
-            "یادآور: $d | $r | $s"
-        } else REMINDER_NONE_TEXT
+            reminderSummary.text = "یادآور: ${jDate[2]}/${jDate[1]}/${jDate[0]} - $timeStr | $r | $s"
+        } else {
+            reminderSummary.text = REMINDER_NONE_TEXT
+        }
     }
 
     private fun scheduleReminder(note: Note) {
@@ -1057,6 +1194,74 @@ class MainActivity : AppCompatActivity() {
             val hash = MessageDigest.getInstance("SHA-256").digest(inp.text.toString().toByteArray()).joinToString("") { "%02x".format(it) }
             val ok = securePrefs.getString(PIN_KEY, null) == hash; if (!ok) Toast.makeText(this, "اشتباه", Toast.LENGTH_SHORT).show(); callback(ok)
         }.show()
+    }
+
+    // ===================================================================
+    // 🔧 توابع تبدیل تاریخ شمسی و میلادی (بدون نیاز به کتابخانه)
+    // ===================================================================
+    private fun jalaliToGregorian(jY: Int, jM: Int, jD: Int): IntArray {
+        var jy = jY - 979
+        var jm = jM - 1
+        var jd = jD - 1
+        var jDayNo = 365 * jy + (jy / 33) * 8 + ((jy % 33) + 3) / 4
+        for (i in 0 until jm) {
+            if (i < 6) jDayNo += 31 else jDayNo += 30
+        }
+        jDayNo += jd
+        var gDayNo = jDayNo + 79
+        var gy = 1600 + 400 * (gDayNo / 146097)
+        gDayNo %= 146097
+        var leap = true
+        if (gDayNo >= 36525) {
+            gDayNo--
+            gy += 100 * (gDayNo / 36524)
+            gDayNo %= 36524
+            if (gDayNo >= 365) gDayNo++ else leap = false
+        }
+        gy += 4 * (gDayNo / 1461)
+        gDayNo %= 1461
+        if (gDayNo >= 366) {
+            leap = false
+            gDayNo--
+            gy += gDayNo / 365
+            gDayNo %= 365
+        }
+        var i = 0
+        var leapDays = intArrayOf(31, if (leap) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+        while (gDayNo >= leapDays[i]) {
+            gDayNo -= leapDays[i]
+            i++
+        }
+        return intArrayOf(gy, i + 1, gDayNo + 1)
+    }
+
+    private fun gregorianToJalali(gY: Int, gM: Int, gD: Int): IntArray {
+        val gDaysInMonth = intArrayOf(31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+        var gy = gY - 1600
+        var gm = gM - 1
+        var gd = gD - 1
+        var gDayNo = 365 * gy + (gy + 3) / 4 - (gy + 99) / 100 + (gy + 399) / 400
+        for (i in 0 until gm) gDayNo += gDaysInMonth[i]
+        if (gm > 1 && ((gy % 4 == 0 && gy % 100 != 0) || (gy % 400 == 0))) gDayNo++
+        gDayNo += gd
+        var jDayNo = gDayNo - 79
+        val jNp = jDayNo / 12053
+        jDayNo %= 12053
+        var jy = 979 + 33 * jNp + 4 * (jDayNo / 1461)
+        jDayNo %= 1461
+        if (jDayNo >= 366) {
+            jy += (jDayNo - 1) / 365
+            jDayNo = (jDayNo - 1) % 365
+        }
+        var jm = 0
+        var i = 0
+        while (i < 11 && jDayNo >= if (i < 6) 31 else 30) {
+            jDayNo -= if (i < 6) 31 else 30
+            i++
+        }
+        jm = i + 1
+        val jd = jDayNo + 1
+        return intArrayOf(jy, jm, jd)
     }
 }
 
