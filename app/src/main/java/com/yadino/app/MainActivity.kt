@@ -18,7 +18,6 @@ import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
 import android.graphics.drawable.StateListDrawable
 import android.media.AudioAttributes
-import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.net.Uri
@@ -872,6 +871,9 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "یادآور مجدداً تنظیم شد.", Toast.LENGTH_SHORT).show()
     }
 
+    // ===================================================================
+    // 🔧 توابع میکروفون با منطق هوشمندانه برای جلوگیری از قطع و وصل
+    // ===================================================================
     private fun toggleVoiceInput(offline: Boolean) {
         if (continuousSpeech) {
             stopContinuousSpeech()
@@ -915,22 +917,27 @@ class MainActivity : AppCompatActivity() {
         }
 
         speechRecognizer?.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) { }
-            override fun onBeginningOfSpeech() {
+            // 🔧 onReadyForSpeech: فقط متن رو ست می‌کنه و چشمک می‌زنه
+            override fun onReadyForSpeech(params: Bundle?) {
                 runOnUiThread {
-                    micStatusText.text = "در حال گوش دادن..."
-                    micStatusText.setTextColor(Color.parseColor("#4CAF50"))
-                    micStatusText.clearAnimation()
+                    micStatusText.text = "صحبت کنید..."
+                    micStatusText.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+                    startBlinkingStatus()
                 }
             }
-            override fun onRmsChanged(rmsdB: Float) { }
+
+            // 🔧 اینا رو خالی گذاشتم که با کوچیک‌ترین صدایی UI عوض نشه
+            override fun onBeginningOfSpeech() { }
+            override fun onEndOfSpeech() { }
             override fun onBufferReceived(buffer: ByteArray?) = Unit
-            override fun onEndOfSpeech() {
-                runOnUiThread {
-                    if (continuousSpeech) {
-                        micStatusText.text = "صحبت کنید..."
-                        micStatusText.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
-                        startBlinkingStatus()
+
+            // 🔧 onRmsChanged: فقط وقتی صدای واقعی اومد، UI رو عوض می‌کنه
+            override fun onRmsChanged(rmsdB: Float) {
+                if (rmsdB > 5.0f && micStatusText.text != "در حال گوش دادن...") {
+                    runOnUiThread {
+                        micStatusText.text = "در حال گوش دادن..."
+                        micStatusText.setTextColor(Color.parseColor("#4CAF50"))
+                        micStatusText.clearAnimation()
                     }
                 }
             }
@@ -939,6 +946,11 @@ class MainActivity : AppCompatActivity() {
                 val partial = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
                 if (partial.isNotBlank() && !isFinishing && !isDestroyed) {
                     runOnUiThread {
+                        if (micStatusText.text != "در حال گوش دادن...") {
+                            micStatusText.text = "در حال گوش دادن..."
+                            micStatusText.setTextColor(Color.parseColor("#4CAF50"))
+                            micStatusText.clearAnimation()
+                        }
                         val t = speechTarget
                         if (t != null) {
                             val sep = if (t == taskInput && voiceBaseText.isNotBlank() && !voiceBaseText.endsWith("\n")) "\n" else " "
@@ -964,10 +976,17 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
+                // بعد از دریافت نتیجه، برگرد به حالت صحبت کنید
+                runOnUiThread {
+                    micStatusText.text = "صحبت کنید..."
+                    micStatusText.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+                    startBlinkingStatus()
+                }
+                
                 if (continuousSpeech) {
                     handler.removeCallbacks(restartRunnable)
-                    // 🔧 افزایش زمان تاخیر به 500 میلی‌ثانیه برای جلوگیری از بوق‌های پشت سر هم
-                    handler.postDelayed(restartRunnable, 500)
+                    // 🔧 تاخیر ۱.۵ ثانیه‌ای قبل از استارت مجدد
+                    handler.postDelayed(restartRunnable, 1500)
                 }
             }
 
@@ -980,10 +999,18 @@ class MainActivity : AppCompatActivity() {
                     startVoiceInput()
                     return
                 }
+                
+                // برگردوندن UI به حالت صحبت کنید
+                runOnUiThread {
+                    micStatusText.text = "صحبت کنید..."
+                    micStatusText.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+                    startBlinkingStatus()
+                }
+
                 if (continuousSpeech) {
                     handler.removeCallbacks(restartRunnable)
-                    // 🔧 افزایش زمان تاخیر به 500 میلی‌ثانیه
-                    handler.postDelayed(restartRunnable, 500)
+                    // 🔧 تاخیر ۱.۵ ثانیه‌ای قبل از استارت مجدد برای جلوگیری از بوق‌های پشت سر هم
+                    handler.postDelayed(restartRunnable, 1500)
                 }
             }
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
@@ -999,12 +1026,10 @@ class MainActivity : AppCompatActivity() {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             
-            // 🔧 تنظیمات جدید برای جلوگیری از قطعی و بوق
-            // حداقل ۱۰ ثانیه گوش بده حتی اگه هیچ صدایی نیاد
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 10000L)
-            // فقط بعد از ۴ ثانیه سکوت مطلق، فکر کن حرف تموم شده
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L)
+            // 🔧 زمان‌های خیلی طولانی برای اینکه خودش به خاطر سکوت قطع نشه
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 5000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 60000L)
         }
         try { speechRecognizer?.startListening(intent) } catch (e: Exception) { isListening = false }
     }
