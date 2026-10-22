@@ -18,6 +18,7 @@ import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
 import android.graphics.drawable.StateListDrawable
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.net.Uri
@@ -965,7 +966,8 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (continuousSpeech) {
                     handler.removeCallbacks(restartRunnable)
-                    handler.postDelayed(restartRunnable, 10)
+                    // 🔧 افزایش زمان تاخیر به 500 میلی‌ثانیه برای جلوگیری از بوق‌های پشت سر هم
+                    handler.postDelayed(restartRunnable, 500)
                 }
             }
 
@@ -980,7 +982,8 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (continuousSpeech) {
                     handler.removeCallbacks(restartRunnable)
-                    handler.postDelayed(restartRunnable, 10)
+                    // 🔧 افزایش زمان تاخیر به 500 میلی‌ثانیه
+                    handler.postDelayed(restartRunnable, 500)
                 }
             }
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
@@ -996,10 +999,12 @@ class MainActivity : AppCompatActivity() {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             
-            // 🔧 تنظیمات متعادل: زمان کافی برای مکث، بدون قطعی الکی
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000L)
+            // 🔧 تنظیمات جدید برای جلوگیری از قطعی و بوق
+            // حداقل ۱۰ ثانیه گوش بده حتی اگه هیچ صدایی نیاد
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 10000L)
+            // فقط بعد از ۴ ثانیه سکوت مطلق، فکر کن حرف تموم شده
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L)
         }
         try { speechRecognizer?.startListening(intent) } catch (e: Exception) { isListening = false }
     }
