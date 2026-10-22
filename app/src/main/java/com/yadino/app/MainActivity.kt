@@ -18,7 +18,6 @@ import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
 import android.graphics.drawable.StateListDrawable
 import android.media.AudioAttributes
-import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.net.Uri
@@ -123,7 +122,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var formContainer: LinearLayout
     private lateinit var mainScroll: ScrollView
     private lateinit var securePrefs: android.content.SharedPreferences
-    private lateinit var audioManager: AudioManager
 
     private lateinit var fab: FloatingActionButton
     private lateinit var micStatusText: TextView
@@ -148,18 +146,6 @@ class MainActivity : AppCompatActivity() {
     private var isOfflineMode = false
     private val handler = Handler(Looper.getMainLooper())
     private val restartRunnable = Runnable { if (continuousSpeech) launchRecognizer() }
-    
-    // تایمر برای تشخیص سکوت کاربر
-    private val quietHandler = Handler(Looper.getMainLooper())
-    private val quietRunnable = Runnable {
-        runOnUiThread {
-            if (continuousSpeech) {
-                micStatusText.text = "صحبت کنید..."
-                micStatusText.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
-                startBlinkingStatus()
-            }
-        }
-    }
 
     private val ringtonePickerLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
@@ -187,7 +173,6 @@ class MainActivity : AppCompatActivity() {
         Handler(Looper.getMainLooper()).postDelayed({ keepSplash = false }, 2000)
 
         super.onCreate(savedInstanceState)
-        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         try {
             initializeSecureStorage()
             loadNotes()
@@ -886,9 +871,6 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "یادآور مجدداً تنظیم شد.", Toast.LENGTH_SHORT).show()
     }
 
-    // ===================================================================
-    // 🔧 توابع میکروفون (کد ری‌استارت حذف شد و از UI کاملاً مخفی شد)
-    // ===================================================================
     private fun toggleVoiceInput(offline: Boolean) {
         if (continuousSpeech) {
             stopContinuousSpeech()
@@ -924,12 +906,6 @@ class MainActivity : AppCompatActivity() {
         voiceBaseText = target.text.toString()
         continuousSpeech = true
         
-        // قطع کردن صدای سیستم برای جلوگیری از بوق
-        try {
-            audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, 0)
-            audioManager.adjustStreamVolume(AudioManager.STREAM_SYSTEM, AudioManager.ADJUST_MUTE, 0)
-        } catch (e: Exception) {}
-
         speechRecognizer?.destroy()
         speechRecognizer = if (isOfflineMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
             SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
@@ -938,24 +914,23 @@ class MainActivity : AppCompatActivity() {
         }
 
         speechRecognizer?.setRecognitionListener(object : RecognitionListener {
-            // 🔧 توابع ری‌استارت رو کاملاً خالی گذاشتم تا UI عوض نشه
             override fun onReadyForSpeech(params: Bundle?) { }
-            override fun onBeginningOfSpeech() { }
-            override fun onEndOfSpeech() { }
+            override fun onBeginningOfSpeech() {
+                runOnUiThread {
+                    micStatusText.text = "در حال گوش دادن..."
+                    micStatusText.setTextColor(Color.parseColor("#4CAF50"))
+                    micStatusText.clearAnimation()
+                }
+            }
+            override fun onRmsChanged(rmsdB: Float) { }
             override fun onBufferReceived(buffer: ByteArray?) = Unit
-
-            // 🔧 فقط با صدای واقعی کار می‌کنه
-            override fun onRmsChanged(rmsdB: Float) {
-                if (rmsdB > 3.5f) {
-                    runOnUiThread {
-                        if (micStatusText.text != "در حال گوش دادن...") {
-                            micStatusText.text = "در حال گوش دادن..."
-                            micStatusText.setTextColor(Color.parseColor("#4CAF50"))
-                            micStatusText.clearAnimation()
-                        }
+            override fun onEndOfSpeech() {
+                runOnUiThread {
+                    if (continuousSpeech) {
+                        micStatusText.text = "صحبت کنید..."
+                        micStatusText.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+                        startBlinkingStatus()
                     }
-                    quietHandler.removeCallbacks(quietRunnable)
-                    quietHandler.postDelayed(quietRunnable, 1500) // 1.5 ثانیه سکوت -> برگرد به صحبت کنید
                 }
             }
 
@@ -963,11 +938,6 @@ class MainActivity : AppCompatActivity() {
                 val partial = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
                 if (partial.isNotBlank() && !isFinishing && !isDestroyed) {
                     runOnUiThread {
-                        if (micStatusText.text != "در حال گوش دادن...") {
-                            micStatusText.text = "در حال گوش دادن..."
-                            micStatusText.setTextColor(Color.parseColor("#4CAF50"))
-                            micStatusText.clearAnimation()
-                        }
                         val t = speechTarget
                         if (t != null) {
                             val sep = if (t == taskInput && voiceBaseText.isNotBlank() && !voiceBaseText.endsWith("\n")) "\n" else " "
@@ -975,8 +945,6 @@ class MainActivity : AppCompatActivity() {
                             t.setSelection(t.text.length)
                         }
                     }
-                    quietHandler.removeCallbacks(quietRunnable)
-                    quietHandler.postDelayed(quietRunnable, 1500)
                 }
             }
 
@@ -995,11 +963,9 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
-                
-                // 🔧 ری‌استارت فوری و بی‌صدا در پس‌زمینه (UI تغییر نمی‌کنه)
                 if (continuousSpeech) {
                     handler.removeCallbacks(restartRunnable)
-                    handler.post(restartRunnable)
+                    handler.postDelayed(restartRunnable, 10)
                 }
             }
 
@@ -1012,11 +978,9 @@ class MainActivity : AppCompatActivity() {
                     startVoiceInput()
                     return
                 }
-                
-                // 🔧 ری‌استارت فوری در صورت خطا
                 if (continuousSpeech) {
                     handler.removeCallbacks(restartRunnable)
-                    handler.post(restartRunnable)
+                    handler.postDelayed(restartRunnable, 10)
                 }
             }
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
@@ -1027,40 +991,28 @@ class MainActivity : AppCompatActivity() {
     private fun launchRecognizer() {
         if (isListening || isFinishing || isDestroyed) return
         isListening = true
-
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             
-            // 🔧 تنظیمات طولانی برای اینکه خودش به خاطر سکوت قطع نشه
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 10000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 10000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 60000L)
+            // 🔧 تنظیمات متعادل: زمان کافی برای مکث، بدون قطعی الکی
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000L)
         }
-        try { 
-            speechRecognizer?.startListening(intent) 
-        } catch (e: Exception) { 
-            isListening = false 
-        }
+        try { speechRecognizer?.startListening(intent) } catch (e: Exception) { isListening = false }
     }
 
     private fun stopContinuousSpeech() {
         continuousSpeech = false
         isListening = false
         handler.removeCallbacks(restartRunnable)
-        quietHandler.removeCallbacks(quietRunnable)
         if (blinkAnimation != null) {
             micStatusText.clearAnimation()
             blinkAnimation = null
         }
-        try { 
-            speechRecognizer?.stopListening()
-            speechRecognizer?.destroy() 
-            // 🔧 برگردوندن صدای سیستم
-            audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE, 0)
-            audioManager.adjustStreamVolume(AudioManager.STREAM_SYSTEM, AudioManager.ADJUST_UNMUTE, 0)
-        } catch (_: Exception) {}
+        try { speechRecognizer?.stopListening(); speechRecognizer?.destroy() } catch (_: Exception) {}
         speechRecognizer = null
     }
 
