@@ -872,8 +872,34 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ===================================================================
-    // 🔧 تنظیمات میکروفون برای سرعت و حساسیت بالاتر
+    // 🔧 توابع میکروفون (که جا افتاده بودند)
     // ===================================================================
+    private fun toggleVoiceInput(offline: Boolean) {
+        if (continuousSpeech) {
+            stopContinuousSpeech()
+            micStatusText.visibility = View.GONE
+            micButton.text = "🎤 شروع ضبط صدا"
+        } else {
+            isOfflineMode = offline
+            startVoiceInput()
+            micStatusText.visibility = View.VISIBLE
+            micStatusText.text = "صحبت کنید..."
+            micStatusText.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+            micButton.text = "🛑 توقف ضبط"
+            
+            startBlinkingStatus()
+        }
+    }
+
+    private fun startBlinkingStatus() {
+        blinkAnimation = AlphaAnimation(0.3f, 1.0f).apply {
+            duration = 800
+            repeatCount = Animation.INFINITE
+            repeatMode = Animation.REVERSE
+        }
+        micStatusText.startAnimation(blinkAnimation)
+    }
+
     private fun startVoiceInput() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), AUDIO_PERMISSION_CODE)
