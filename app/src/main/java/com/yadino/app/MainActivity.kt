@@ -871,9 +871,6 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "یادآور مجدداً تنظیم شد.", Toast.LENGTH_SHORT).show()
     }
 
-    // ===================================================================
-    // 🔧 توابع میکروفون (که جا افتاده بودند)
-    // ===================================================================
     private fun toggleVoiceInput(offline: Boolean) {
         if (continuousSpeech) {
             stopContinuousSpeech()
@@ -999,11 +996,10 @@ class MainActivity : AppCompatActivity() {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             
-            // 🔧 حساسیت و سرعت بالا
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 300L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 300L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 300L)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true) 
+            // 🔧 تنظیمات متعادل: زمان کافی برای مکث، بدون قطعی الکی
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000L)
         }
         try { speechRecognizer?.startListening(intent) } catch (e: Exception) { isListening = false }
     }
