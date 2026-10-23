@@ -11,6 +11,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -52,6 +54,9 @@ import com.google.android.material.card.MaterialCardView
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -95,6 +100,7 @@ data class Note(
     var category: String,
     var isPrivate: Boolean = false,
     var colorHex: String = "",
+    var imagePath: String? = null, // 🔧 مسیر عکس
     val tasks: MutableList<Task> = mutableListOf(),
     var reminderAt: Long = 0L,
     var reminderEnabled: Boolean = false,
@@ -122,6 +128,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var formContainer: LinearLayout
     private lateinit var mainScroll: ScrollView
     private lateinit var securePrefs: android.content.SharedPreferences
+    private lateinit var formImageStatusText: TextView
 
     private lateinit var fab: FloatingActionButton
     private lateinit var micStatusText: TextView
@@ -135,7 +142,8 @@ class MainActivity : AppCompatActivity() {
     private var selectedRepeatCount = 0
     private var selectedRepeatInterval = 60
     private var selectedRingtoneUri = ""
-    
+    private var currentDraftImagePath: String? = null
+
     private var pendingSnoozeNoteId: String? = null
 
     private var speechRecognizer: SpeechRecognizer? = null
@@ -162,6 +170,30 @@ class MainActivity : AppCompatActivity() {
         updateReminderSummary()
     }
 
+    // 🔧 لانچر انتخاب عکس
+    private val imagePickerLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val inputStream: InputStream? = contentResolver.openInputStream(uri)
+                val fileName = "img_${UUID.randomUUID()}.jpg"
+                val file = File(filesDir, fileName)
+                val outputStream = FileOutputStream(file)
+                inputStream?.copyTo(outputStream)
+                inputStream?.close()
+                outputStream.close()
+                
+                currentDraftImagePath = file.absolutePath
+                formImageStatusText.text = "📷 عکس انتخاب شد"
+                formImageStatusText.setTextColor(Color.parseColor("#4CAF50"))
+            } catch (e: Exception) {
+                Log.e(TAG, "Error copying image", e)
+                Toast.makeText(this, "خطا در ذخیره عکس", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         if (intent?.action == "SHOW_SNOOZE_DIALOG") {
             pendingSnoozeNoteId = intent.getStringExtra("note_id")
@@ -170,7 +202,7 @@ class MainActivity : AppCompatActivity() {
         var keepSplash = true
         val splashScreen = installSplashScreen()
         splashScreen.setKeepOnScreenCondition { keepSplash }
-        Handler(Looper.getMainLooper()).postDelayed({ keepSplash = false }, 2000)
+        Handler(Looper.getMainLooper()).postDelayed({ keepSplash = false }, 1500)
 
         super.onCreate(savedInstanceState)
         try {
@@ -222,13 +254,19 @@ class MainActivity : AppCompatActivity() {
             setPadding(40, 60, 40, 450)
         }
 
+        // 🔧 عنوان و دکمه تنظیمات
+        val headerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            weightSum = 3f
+        }
+
         val titleTv = TextView(this).apply {
             text = "یادینو"
             textSize = 48f
             gravity = Gravity.CENTER
             typeface = Typeface.create("sans-serif-black", Typeface.BOLD)
             letterSpacing = 0.05f
-            setPadding(0, 10, 0, 50)
             setShadowLayer(15f, 0f, 0f, Color.parseColor("#80D4AF37"))
         }
         titleTv.post {
@@ -242,7 +280,20 @@ class MainActivity : AppCompatActivity() {
             paint.shader = shader
             titleTv.invalidate()
         }
-        content.addView(titleTv)
+        
+        headerRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f)) // Spacer
+        headerRow.addView(titleTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        
+        val settingsBtn = TextView(this).apply {
+            text = "⚙️"
+            textSize = 32f
+            gravity = Gravity.CENTER
+            setOnClickListener { showSettingsDialog() }
+        }
+        headerRow.addView(settingsBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        
+        content.addView(headerRow)
+        content.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, 30) })
 
         formContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -348,6 +399,20 @@ class MainActivity : AppCompatActivity() {
         }
         formContainer.addView(micStatusText, matchWidth())
 
+        // 🔧 دکمه افزودن عکس
+        formContainer.addView(createGoldButton("📷 افزودن عکس") { 
+            imagePickerLauncher.launch("image/*") 
+        }, matchWidth())
+
+        formImageStatusText = TextView(this).apply {
+            text = ""
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+            setPadding(0, 0, 0, 15)
+        }
+        formContainer.addView(formImageStatusText, matchWidth())
+
         formContainer.addView(createGoldButton("تنظیم یادآور") { configureReminder() }, matchWidth())
         formContainer.addView(createGoldButton("🤖 دستیار هوشمند") { 
             Toast.makeText(this, "قابلیت هوش مصنوعی به زودی فعال می‌شود...", Toast.LENGTH_SHORT).show() 
@@ -424,6 +489,22 @@ class MainActivity : AppCompatActivity() {
         setContentView(root)
     }
 
+    private fun showSettingsDialog() {
+        val options = arrayOf("🔐 تغییر رمز عبور", "⭐️ امتیاز به برنامه در مایکت")
+        showCustomListDialog("تنظیمات", options) { which ->
+            if (which == 0) {
+                showSetPinDialog { Toast.makeText(this, "رمز عبور با موفقیت تغییر کرد", Toast.LENGTH_SHORT).show() }
+            } else {
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://myket.ir/app/com.yadino.app"))
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    Toast.makeText(this, "مایکت یافت نشد", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
     private fun matchWidth(): LinearLayout.LayoutParams =
         LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 24 }
 
@@ -450,6 +531,30 @@ class MainActivity : AppCompatActivity() {
         noteAdapter.updateData(visibleNotes)
     }
 
+    // 🔧 لود کردن عکس به صورت فشرده
+    private fun loadBitmap(filePath: String, reqWidth: Int, reqHeight: Int): Bitmap? {
+        val options = BitmapFactory.Options()
+        options.inJustDecodeBounds = true
+        BitmapFactory.decodeFile(filePath, options)
+        
+        options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
+        options.inJustDecodeBounds = false
+        return try { BitmapFactory.decodeFile(filePath, options) } catch (e: Exception) { null }
+    }
+
+    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+        val (height: Int, width: Int) = options.run { outHeight to outWidth }
+        var inSampleSize = 1
+        if (height > reqHeight || width > reqWidth) {
+            val halfHeight = height / 2
+            val halfWidth = width / 2
+            while ((halfHeight / inSampleSize) >= reqHeight && (halfWidth / inSampleSize) >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+        return inSampleSize
+    }
+
     inner class NoteAdapter(
         private var items: List<Note>,
         private val onClick: (Note) -> Unit,
@@ -464,7 +569,8 @@ class MainActivity : AppCompatActivity() {
             val hint: TextView,
             val tasksLayout: LinearLayout,
             val progressText: TextView,
-            val reminderText: TextView
+            val reminderText: TextView,
+            val noteImage: ImageView
         ) : RecyclerView.ViewHolder(card)
 
         fun updateData(newItems: List<Note>) {
@@ -499,6 +605,12 @@ class MainActivity : AppCompatActivity() {
             
             val innerLayout = card.getChildAt(0) as LinearLayout
             val title = TextView(parent.context).apply { textSize = 20f; typeface = Typeface.DEFAULT_BOLD }
+            val noteImage = ImageView(parent.context).apply { 
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 400)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                visibility = View.GONE
+                setPadding(0, 10, 0, 10)
+            }
             val bodyText = TextView(parent.context).apply { textSize = 14f; maxLines = 3; setPadding(0, 10, 0, 10) }
             val category = TextView(parent.context).apply { textSize = 13f; setPadding(0, 5, 0, 5) }
             val hint = TextView(parent.context).apply { textSize = 11f; setPadding(0, 5, 0, 0) }
@@ -507,6 +619,7 @@ class MainActivity : AppCompatActivity() {
             val tasksLayout = LinearLayout(parent.context).apply { orientation = LinearLayout.VERTICAL }
             
             innerLayout.addView(title)
+            innerLayout.addView(noteImage)
             innerLayout.addView(bodyText)
             innerLayout.addView(category)
             innerLayout.addView(hint)
@@ -514,7 +627,7 @@ class MainActivity : AppCompatActivity() {
             innerLayout.addView(reminderText)
             innerLayout.addView(tasksLayout)
             
-            return ViewHolder(card, title, bodyText, category, hint, tasksLayout, progressText, reminderText)
+            return ViewHolder(card, title, bodyText, category, hint, tasksLayout, progressText, reminderText, noteImage)
         }
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
@@ -532,6 +645,19 @@ class MainActivity : AppCompatActivity() {
 
             holder.category.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
             holder.category.text = "دسته: ${note.category}"
+
+            // 🔧 نمایش عکس
+            if (note.imagePath != null && !note.isPrivate) {
+                val bitmap = loadBitmap(note.imagePath!!, 400, 400)
+                if (bitmap != null) {
+                    holder.noteImage.setImageBitmap(bitmap)
+                    holder.noteImage.visibility = View.VISIBLE
+                } else {
+                    holder.noteImage.visibility = View.GONE
+                }
+            } else {
+                holder.noteImage.visibility = View.GONE
+            }
 
             if (note.isPrivate) {
                 holder.hint.text = "برای مشاهده، رمز عبور را وارد کنید"
@@ -633,6 +759,19 @@ class MainActivity : AppCompatActivity() {
             content.addView(TextView(this).apply { 
                 text = "دسته: ${note.category}"; textSize = 14f; setTextColor(Color.parseColor(COLOR_GOLD)); setPadding(0, 10, 0, 20) 
             })
+
+            // 🔧 نمایش عکس در صفحه مشاهده
+            if (note.imagePath != null) {
+                val bitmap = loadBitmap(note.imagePath!!, 800, 800)
+                if (bitmap != null) {
+                    content.addView(ImageView(this).apply {
+                        setImageBitmap(bitmap)
+                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 600)
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        setPadding(0, 0, 0, 20)
+                    })
+                }
+            }
             
             content.addView(TextView(this).apply { 
                 text = note.body; textSize = 16f; setTextColor(Color.WHITE); setLineSpacing(1.5f, 1.5f)
@@ -712,7 +851,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (note.isPrivate) {
-            requestPin("برای مشاهده یادداشت خصوصی، PIN را وارد کن") { valid -> if (valid) showDialog() }
+            requestPin("برای مشاهده یادداشت خصوصی، رمز عبور را وارد کن") { valid -> if (valid) showDialog() }
         } else {
             showDialog()
         }
@@ -965,7 +1104,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (continuousSpeech) {
                     handler.removeCallbacks(restartRunnable)
-                    handler.postDelayed(restartRunnable, 10)
+                    handler.postDelayed(restartRunnable, 500)
                 }
             }
 
@@ -980,7 +1119,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (continuousSpeech) {
                     handler.removeCallbacks(restartRunnable)
-                    handler.postDelayed(restartRunnable, 10)
+                    handler.postDelayed(restartRunnable, 500)
                 }
             }
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
@@ -991,17 +1130,20 @@ class MainActivity : AppCompatActivity() {
     private fun launchRecognizer() {
         if (isListening || isFinishing || isDestroyed) return
         isListening = true
+
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            
-            // 🔧 تنظیمات متعادل: زمان کافی برای مکث، بدون قطعی الکی
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000L)
         }
-        try { speechRecognizer?.startListening(intent) } catch (e: Exception) { isListening = false }
+        try { 
+            speechRecognizer?.startListening(intent) 
+        } catch (e: Exception) { 
+            isListening = false 
+        }
     }
 
     private fun stopContinuousSpeech() {
@@ -1012,7 +1154,10 @@ class MainActivity : AppCompatActivity() {
             micStatusText.clearAnimation()
             blinkAnimation = null
         }
-        try { speechRecognizer?.stopListening(); speechRecognizer?.destroy() } catch (_: Exception) {}
+        try { 
+            speechRecognizer?.stopListening()
+            speechRecognizer?.destroy() 
+        } catch (_: Exception) {}
         speechRecognizer = null
     }
 
@@ -1025,7 +1170,7 @@ class MainActivity : AppCompatActivity() {
         val isPrivate = privateCheckBox.isChecked
 
         if (isPrivate && securePrefs.getString(PIN_KEY, null).isNullOrBlank()) showSetPinDialog { persistCurrentNote(title, body, category, isPrivate) }
-        else if (isPrivate) requestPin("برای ذخیره، PIN را وارد کن") { if (it) persistCurrentNote(title, body, category, true) }
+        else if (isPrivate) requestPin("برای ذخیره، رمز عبور را وارد کن") { if (it) persistCurrentNote(title, body, category, true) }
         else persistCurrentNote(title, body, category, false)
     }
 
@@ -1033,6 +1178,7 @@ class MainActivity : AppCompatActivity() {
         val existing = editingNoteId?.let { id -> notes.find { it.id == id } }
         val note = existing ?: Note(title = title, body = body, category = category)
         note.title = title; note.body = body; note.category = category; note.isPrivate = isPrivate
+        note.imagePath = currentDraftImagePath
 
         val oldDoneByText = note.tasks.associate { it.text to it.done }
         note.tasks.clear()
@@ -1058,6 +1204,8 @@ class MainActivity : AppCompatActivity() {
         categorySpinner.setSelection(0); privateCheckBox.isChecked = false; editingNoteId = null
         selectedReminderAt = 0L; selectedReminderEnabled = false; selectedRepeatMode = "none"
         selectedRepeatCount = 0; selectedRepeatInterval = 60; selectedRingtoneUri = ""
+        currentDraftImagePath = null
+        formImageStatusText.text = ""
         reminderSummary.text = REMINDER_NONE_TEXT
         micStatusText.visibility = View.GONE
         micButton.text = "🎤 شروع ضبط صدا"
@@ -1068,6 +1216,15 @@ class MainActivity : AppCompatActivity() {
         privateCheckBox.isChecked = note.isPrivate
         val idx = categories.drop(1).indexOf(note.category); categorySpinner.setSelection(if (idx >= 0) idx else 0)
         taskInput.setText(note.tasks.joinToString("\n") { it.text })
+        
+        currentDraftImagePath = note.imagePath
+        if (currentDraftImagePath != null) {
+            formImageStatusText.text = "📷 عکس موجود است (برای تغییر دوباره کلیک کنید)"
+            formImageStatusText.setTextColor(Color.parseColor(COLOR_GOLD))
+        } else {
+            formImageStatusText.text = ""
+        }
+
         selectedReminderAt = note.reminderAt; selectedReminderEnabled = note.reminderEnabled
         selectedRepeatMode = note.repeatMode; selectedRepeatCount = note.repeatCount
         selectedRepeatInterval = note.repeatIntervalMinutes; selectedRingtoneUri = note.ringtoneUri
@@ -1086,7 +1243,7 @@ class MainActivity : AppCompatActivity() {
         showCustomListDialog("تنظیمات", options) { which ->
             if (which == 0) {
                 if (note.isPrivate) {
-                    requestPin("برای تغییر رنگ یادداشت خصوصی، PIN را وارد کن") { valid -> if (valid) showColorPicker(note) }
+                    requestPin("برای تغییر رنگ یادداشت خصوصی، رمز عبور را وارد کن") { valid -> if (valid) showColorPicker(note) }
                 } else showColorPicker(note)
             } else {
                 confirmDelete(note)
@@ -1106,7 +1263,7 @@ class MainActivity : AppCompatActivity() {
         val del = { showCustomConfirmDialog("حذف", "آیا از حذف این یادداشت مطمئن هستید؟") {
             cancelReminder(note.id); notes.removeAll { it.id == note.id }; saveNotes(); renderNotes()
         } }
-        if (note.isPrivate) requestPin("برای حذف یادداشت خصوصی، PIN را وارد کن") { if (it) del() } else del()
+        if (note.isPrivate) requestPin("برای حذف یادداشت خصوصی، رمز عبور را وارد کن") { if (it) del() } else del()
     }
 
     private fun configureRepeatOptions() {
@@ -1207,6 +1364,7 @@ class MainActivity : AppCompatActivity() {
             notes.forEach { n ->
                 a.put(JSONObject().apply {
                     put("id", n.id); put("title", n.title); put("body", n.body); put("category", n.category); put("private", n.isPrivate); put("colorHex", n.colorHex)
+                    if (n.imagePath != null) put("imagePath", n.imagePath)
                     val ta = JSONArray(); n.tasks.forEach { ta.put(JSONObject().apply { put("id", it.id); put("text", it.text); put("done", it.done) }) }; put("tasks", ta)
                     put("reminderAt", n.reminderAt); put("reminderEnabled", n.reminderEnabled); put("repeatMode", n.repeatMode); put("repeatCount", n.repeatCount); put("repeatIntervalMinutes", n.repeatIntervalMinutes); put("ringtoneUri", n.ringtoneUri); put("reminderFiredCount", n.reminderFiredCount)
                 })
@@ -1224,7 +1382,11 @@ class MainActivity : AppCompatActivity() {
                 val o = a.optJSONObject(i) ?: continue
                 val t = mutableListOf<Task>(); val ta = o.optJSONArray("tasks") ?: JSONArray()
                 for (j in 0 until ta.length()) { val to = ta.optJSONObject(j) ?: continue; t.add(Task(id = to.optString("id").ifBlank { UUID.randomUUID().toString() }, text = to.optString("text"), done = to.optBoolean("done", false))) }
-                notes.add(Note(id = o.optString("id").ifBlank { UUID.randomUUID().toString() }, title = o.optString("title"), body = o.optString("body"), category = o.optString("category", "عمومی"), isPrivate = o.optBoolean("private", false), colorHex = o.optString("colorHex", ""), tasks = t, reminderAt = o.optLong("reminderAt", 0L), reminderEnabled = o.optBoolean("reminderEnabled", false), repeatMode = o.optString("repeatMode", "none"), repeatCount = o.optInt("repeatCount", 0), repeatIntervalMinutes = o.optInt("repeatIntervalMinutes", 60), ringtoneUri = o.optString("ringtoneUri", ""), reminderFiredCount = o.optInt("reminderFiredCount", 0)))
+                notes.add(Note(
+                    id = o.optString("id").ifBlank { UUID.randomUUID().toString() }, title = o.optString("title"), body = o.optString("body"), category = o.optString("category", "عمومی"), isPrivate = o.optBoolean("private", false), colorHex = o.optString("colorHex", ""), 
+                    imagePath = if (o.has("imagePath")) o.optString("imagePath") else null,
+                    tasks = t, reminderAt = o.optLong("reminderAt", 0L), reminderEnabled = o.optBoolean("reminderEnabled", false), repeatMode = o.optString("repeatMode", "none"), repeatCount = o.optInt("repeatCount", 0), repeatIntervalMinutes = o.optInt("repeatIntervalMinutes", 60), ringtoneUri = o.optString("ringtoneUri", ""), reminderFiredCount = o.optInt("reminderFiredCount", 0)
+                ))
             }
         } catch (e: Exception) { Log.e(TAG, "Load fail", e) }
         
@@ -1252,11 +1414,19 @@ class MainActivity : AppCompatActivity() {
         }
 
         content.addView(TextView(this).apply { 
-            text = "ساخت PIN جدید"; textSize = 18f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD; setPadding(0, 0, 0, 20)
+            text = "ساخت رمز عبور جدید"; textSize = 18f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD; setPadding(0, 0, 0, 20)
         })
 
+        val cbTextPassword = CheckBox(this).apply {
+            text = "استفاده از رمز متنی (حروف و اعداد)"
+            setTextColor(Color.WHITE)
+            buttonTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
+            setPadding(0, 0, 0, 15)
+        }
+        content.addView(cbTextPassword)
+
         val inp = EditText(this).apply { 
-            hint = "PIN (حداقل ۴ رقم)"
+            hint = "رمز عبور (حداقل ۴ کاراکتر)"
             setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
             setTextColor(Color.WHITE)
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
@@ -1264,6 +1434,15 @@ class MainActivity : AppCompatActivity() {
             setPadding(30, 30, 30, 30)
         }
         content.addView(inp)
+
+        cbTextPassword.setOnCheckedChangeListener { _, isChecked ->
+            inp.text.clear()
+            if (isChecked) {
+                inp.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            } else {
+                inp.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            }
+        }
 
         val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 30, 0, 0) }
         
@@ -1283,7 +1462,7 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener {
                 val pin = inp.text.toString()
                 if (pin.length < 4) {
-                    Toast.makeText(this@MainActivity, "حداقل ۴ رقم وارد کنید.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "رمز عبور باید حداقل ۴ کاراکتر باشد.", Toast.LENGTH_SHORT).show()
                 } else {
                     securePrefs.edit().putString(PIN_KEY, MessageDigest.getInstance("SHA-256").digest(pin.toByteArray()).joinToString("") { "%02x".format(it) }).apply()
                     dialog.dismiss()
@@ -1318,10 +1497,10 @@ class MainActivity : AppCompatActivity() {
         })
 
         val inp = EditText(this).apply { 
-            hint = "PIN"
+            hint = "رمز عبور"
             setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
             setTextColor(Color.WHITE)
-            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             background = GradientDrawable().apply { setColor(Color.parseColor("#202020")); cornerRadius = 20f; setStroke(1, Color.parseColor(COLOR_TEXT_SECONDARY)) }
             setPadding(30, 30, 30, 30)
         }
@@ -1348,7 +1527,7 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener {
                 val hash = MessageDigest.getInstance("SHA-256").digest(inp.text.toString().toByteArray()).joinToString("") { "%02x".format(it) }
                 val ok = securePrefs.getString(PIN_KEY, null) == hash
-                if (!ok) Toast.makeText(this@MainActivity, "PIN اشتباه است.", Toast.LENGTH_SHORT).show()
+                if (!ok) Toast.makeText(this@MainActivity, "رمز عبور اشتباه است.", Toast.LENGTH_SHORT).show()
                 dialog.dismiss()
                 callback(ok)
             }
