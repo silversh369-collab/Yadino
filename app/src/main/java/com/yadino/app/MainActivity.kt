@@ -7,6 +7,8 @@ import android.app.Dialog
 import android.app.PendingIntent
 import android.app.TimePickerDialog
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -36,6 +38,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
+import android.view.WindowManager
 import android.view.animation.AlphaAnimation
 import android.view.animation.Animation
 import android.view.animation.DecelerateInterpolator
@@ -100,7 +103,7 @@ data class Note(
     var category: String,
     var isPrivate: Boolean = false,
     var colorHex: String = "",
-    var imagePath: String? = null, // 🔧 مسیر عکس
+    val imagePaths: MutableList<String> = mutableListOf(), // 🔧 لیست عکس‌ها
     val tasks: MutableList<Task> = mutableListOf(),
     var reminderAt: Long = 0L,
     var reminderEnabled: Boolean = false,
@@ -128,7 +131,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var formContainer: LinearLayout
     private lateinit var mainScroll: ScrollView
     private lateinit var securePrefs: android.content.SharedPreferences
-    private lateinit var formImageStatusText: TextView
+    private lateinit var draftImagesContainer: LinearLayout
 
     private lateinit var fab: FloatingActionButton
     private lateinit var micStatusText: TextView
@@ -142,7 +145,7 @@ class MainActivity : AppCompatActivity() {
     private var selectedRepeatCount = 0
     private var selectedRepeatInterval = 60
     private var selectedRingtoneUri = ""
-    private var currentDraftImagePath: String? = null
+    private val currentDraftImagePaths = mutableListOf<String>() // 🔧 لیست موقت عکس‌ها
 
     private var pendingSnoozeNoteId: String? = null
 
@@ -170,27 +173,15 @@ class MainActivity : AppCompatActivity() {
         updateReminderSummary()
     }
 
-    // 🔧 لانچر انتخاب عکس
+    // 🔧 لانچر انتخاب چند عکس
     private val imagePickerLauncher = registerForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            try {
-                val inputStream: InputStream? = contentResolver.openInputStream(uri)
-                val fileName = "img_${UUID.randomUUID()}.jpg"
-                val file = File(filesDir, fileName)
-                val outputStream = FileOutputStream(file)
-                inputStream?.copyTo(outputStream)
-                inputStream?.close()
-                outputStream.close()
-                
-                currentDraftImagePath = file.absolutePath
-                formImageStatusText.text = "📷 عکس انتخاب شد"
-                formImageStatusText.setTextColor(Color.parseColor("#4CAF50"))
-            } catch (e: Exception) {
-                Log.e(TAG, "Error copying image", e)
-                Toast.makeText(this, "خطا در ذخیره عکس", Toast.LENGTH_SHORT).show()
+        androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            for (uri in uris) {
+                copyUriToInternalStorage(uri)
             }
+            refreshDraftImages()
         }
     }
 
@@ -237,6 +228,60 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    // 🔧 تابع کپی کردن عکس به حافظه داخلی
+    private fun copyUriToInternalStorage(uri: Uri) {
+        try {
+            val inputStream: InputStream? = contentResolver.openInputStream(uri)
+            val fileName = "img_${UUID.randomUUID()}.jpg"
+            val file = File(filesDir, fileName)
+            val outputStream = FileOutputStream(file)
+            inputStream?.copyTo(outputStream)
+            inputStream?.close()
+            outputStream.close()
+            currentDraftImagePaths.add(file.absolutePath)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error copying image", e)
+        }
+    }
+
+    // 🔧 تابع پیست کردن عکس از کلیپ‌بورد
+    private fun pasteImageFromClipboard() {
+        try {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            if (!clipboard.hasPrimaryClip()) {
+                Toast.makeText(this, "حافظه خالی است.", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            val clip = clipboard.primaryClip
+            if (clip != null && clip.itemCount > 0) {
+                // حالت اول: URI عکس کپی شده
+                val item = clip.getItemAt(0)
+                if (item.uri != null && clip.description.hasMimeType("image/*")) {
+                    copyUriToInternalStorage(item.uri)
+                    refreshDraftImages()
+                    Toast.makeText(this, "عکس پیست شد.", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                
+                // حالت دوم: متن شامل URI
+                if (item.text != null) {
+                    val text = item.text.toString()
+                    if (text.startsWith("content://") || text.startsWith("file://")) {
+                        copyUriToInternalStorage(Uri.parse(text))
+                        refreshDraftImages()
+                        Toast.makeText(this, "عکس پیست شد.", Toast.LENGTH_SHORT).show()
+                        return
+                    }
+                }
+            }
+            Toast.makeText(this, "عکسی در حافظه یافت نشد.", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Log.e(TAG, "Paste failed", e)
+            Toast.makeText(this, "خطا در پیست کردن عکس", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun buildScreen() {
         val rootBg = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
@@ -254,7 +299,6 @@ class MainActivity : AppCompatActivity() {
             setPadding(40, 60, 40, 450)
         }
 
-        // 🔧 عنوان و دکمه تنظیمات
         val headerRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -281,7 +325,7 @@ class MainActivity : AppCompatActivity() {
             titleTv.invalidate()
         }
         
-        headerRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f)) // Spacer
+        headerRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         headerRow.addView(titleTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         
         val settingsBtn = TextView(this).apply {
@@ -399,19 +443,27 @@ class MainActivity : AppCompatActivity() {
         }
         formContainer.addView(micStatusText, matchWidth())
 
-        // 🔧 دکمه افزودن عکس
-        formContainer.addView(createGoldButton("📷 افزودن عکس") { 
+        // 🔧 دکمه انتخاب چند عکس
+        formContainer.addView(createGoldButton("📷 افزودن عکس‌ها") { 
             imagePickerLauncher.launch("image/*") 
         }, matchWidth())
 
-        formImageStatusText = TextView(this).apply {
-            text = ""
-            textSize = 12f
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
-            setPadding(0, 0, 0, 15)
+        // 🔧 دکمه پیست عکس
+        formContainer.addView(createGoldButton("📋 پیست عکس از حافظه") {
+            pasteImageFromClipboard()
+        }, matchWidth())
+
+        // 🔧 کانتینر نمایش عکس‌های انتخاب شده
+        val draftImagesScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            setPadding(0, 10, 0, 20)
         }
-        formContainer.addView(formImageStatusText, matchWidth())
+        draftImagesContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+        draftImagesScroll.addView(draftImagesContainer)
+        formContainer.addView(draftImagesScroll)
 
         formContainer.addView(createGoldButton("تنظیم یادآور") { configureReminder() }, matchWidth())
         formContainer.addView(createGoldButton("🤖 دستیار هوشمند") { 
@@ -489,6 +541,44 @@ class MainActivity : AppCompatActivity() {
         setContentView(root)
     }
 
+    // 🔧 تابع رفرش کردن عکس‌های انتخاب شده در فرم
+    private fun refreshDraftImages() {
+        if (!::draftImagesContainer.isInitialized) return
+        draftImagesContainer.removeAllViews()
+
+        for (path in currentDraftImagePaths) {
+            val itemLayout = FrameLayout(this).apply {
+                layoutParams = LinearLayout.LayoutParams(300, 300).apply { marginEnd = 20 }
+            }
+
+            val imgView = ImageView(this).apply {
+                layoutParams = FrameLayout.LayoutParams(300, 300)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                val bmp = loadBitmap(path, 300, 300)
+                if (bmp != null) setImageBitmap(bmp)
+                background = GradientDrawable().apply { cornerRadius = 20f; setColor(Color.DKGRAY) }
+            }
+            itemLayout.addView(imgView)
+
+            val removeBtn = TextView(this).apply {
+                text = "❌"
+                textSize = 16f
+                gravity = Gravity.CENTER
+                setBackgroundColor(Color.parseColor("#80000000"))
+                layoutParams = FrameLayout.LayoutParams(60, 60).apply {
+                    gravity = Gravity.TOP or Gravity.RIGHT
+                }
+                setOnClickListener {
+                    currentDraftImagePaths.remove(path)
+                    refreshDraftImages()
+                }
+            }
+            itemLayout.addView(removeBtn)
+
+            draftImagesContainer.addView(itemLayout)
+        }
+    }
+
     private fun showSettingsDialog() {
         val options = arrayOf("🔐 تغییر رمز عبور", "⭐️ امتیاز به برنامه در مایکت")
         showCustomListDialog("تنظیمات", options) { which ->
@@ -531,7 +621,6 @@ class MainActivity : AppCompatActivity() {
         noteAdapter.updateData(visibleNotes)
     }
 
-    // 🔧 لود کردن عکس به صورت فشرده
     private fun loadBitmap(filePath: String, reqWidth: Int, reqHeight: Int): Bitmap? {
         val options = BitmapFactory.Options()
         options.inJustDecodeBounds = true
@@ -570,7 +659,7 @@ class MainActivity : AppCompatActivity() {
             val tasksLayout: LinearLayout,
             val progressText: TextView,
             val reminderText: TextView,
-            val noteImage: ImageView
+            val noteImageContainer: FrameLayout // 🔧 تغییر به کانتینر برای بج
         ) : RecyclerView.ViewHolder(card)
 
         fun updateData(newItems: List<Note>) {
@@ -605,9 +694,8 @@ class MainActivity : AppCompatActivity() {
             
             val innerLayout = card.getChildAt(0) as LinearLayout
             val title = TextView(parent.context).apply { textSize = 20f; typeface = Typeface.DEFAULT_BOLD }
-            val noteImage = ImageView(parent.context).apply { 
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 400)
-                scaleType = ImageView.ScaleType.CENTER_CROP
+            val noteImageContainer = FrameLayout(parent.context).apply {
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 visibility = View.GONE
                 setPadding(0, 10, 0, 10)
             }
@@ -619,7 +707,7 @@ class MainActivity : AppCompatActivity() {
             val tasksLayout = LinearLayout(parent.context).apply { orientation = LinearLayout.VERTICAL }
             
             innerLayout.addView(title)
-            innerLayout.addView(noteImage)
+            innerLayout.addView(noteImageContainer)
             innerLayout.addView(bodyText)
             innerLayout.addView(category)
             innerLayout.addView(hint)
@@ -627,7 +715,7 @@ class MainActivity : AppCompatActivity() {
             innerLayout.addView(reminderText)
             innerLayout.addView(tasksLayout)
             
-            return ViewHolder(card, title, bodyText, category, hint, tasksLayout, progressText, reminderText, noteImage)
+            return ViewHolder(card, title, bodyText, category, hint, tasksLayout, progressText, reminderText, noteImageContainer)
         }
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
@@ -646,17 +734,46 @@ class MainActivity : AppCompatActivity() {
             holder.category.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
             holder.category.text = "دسته: ${note.category}"
 
-            // 🔧 نمایش عکس
-            if (note.imagePath != null && !note.isPrivate) {
-                val bitmap = loadBitmap(note.imagePath!!, 400, 400)
-                if (bitmap != null) {
-                    holder.noteImage.setImageBitmap(bitmap)
-                    holder.noteImage.visibility = View.VISIBLE
-                } else {
-                    holder.noteImage.visibility = View.GONE
+            // 🔧 نمایش عکس اول به همراه بج تعداد
+            holder.noteImageContainer.removeAllViews()
+            if (note.imagePaths.isNotEmpty() && !note.isPrivate) {
+                holder.noteImageContainer.visibility = View.VISIBLE
+                
+                val firstImagePath = note.imagePaths[0]
+                val bmp = loadBitmap(firstImagePath, 400, 400)
+                if (bmp != null) {
+                    val img = ImageView(holder.card.context).apply {
+                        layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        adjustViewBounds = true
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                        setImageBitmap(bmp)
+                    }
+                    holder.noteImageContainer.addView(img)
+
+                    // اگه بیشتر از یه عکس بود، بج نشون بده
+                    if (note.imagePaths.size > 1) {
+                        val badge = TextView(holder.card.context).apply {
+                            text = "+${note.imagePaths.size - 1}"
+                            textSize = 12f
+                            setTextColor(Color.WHITE)
+                            setPadding(12, 6, 12, 6)
+                            background = GradientDrawable().apply {
+                                setColor(Color.parseColor("#CC000000"))
+                                cornerRadius = 50f
+                            }
+                            layoutParams = FrameLayout.LayoutParams(
+                                ViewGroup.LayoutParams.WRAP_CONTENT,
+                                ViewGroup.LayoutParams.WRAP_CONTENT
+                            ).apply {
+                                gravity = Gravity.BOTTOM or Gravity.RIGHT
+                                setMargins(10, 10, 10, 10)
+                            }
+                        }
+                        holder.noteImageContainer.addView(badge)
+                    }
                 }
             } else {
-                holder.noteImage.visibility = View.GONE
+                holder.noteImageContainer.visibility = View.GONE
             }
 
             if (note.isPrivate) {
@@ -735,46 +852,98 @@ class MainActivity : AppCompatActivity() {
         override fun getItemCount() = items.size
     }
 
+    // ===================================================================
+    // 🔧 صفحه مشاهده یادداشت (با نمایش چند عکس)
+    // ===================================================================
     private fun showNoteDetails(note: Note) {
         val showDialog = {
             val dialog = Dialog(this)
             dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
             
+            val rootLayout = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.parseColor(COLOR_BG_BOTTOM))
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+            }
+
+            val header = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(40, 60, 40, 20)
+            }
+            
+            val closeBtn = TextView(this).apply {
+                text = "✖"
+                textSize = 24f
+                setTextColor(Color.parseColor(COLOR_TEXT_PRIMARY))
+                setOnClickListener { dialog.dismiss() }
+            }
+            header.addView(closeBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            
+            val editBtn = TextView(this).apply {
+                text = "✏️ ویرایش"
+                textSize = 16f
+                setTextColor(Color.parseColor(COLOR_GOLD))
+                setOnClickListener {
+                    dialog.dismiss()
+                    if (note.isPrivate) {
+                        requestPin("برای ویرایش، رمز عبور را وارد کن") { valid -> if (valid) { editNote(note); showForm() } }
+                    } else {
+                        editNote(note)
+                        showForm()
+                    }
+                }
+            }
+            header.addView(editBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            
+            rootLayout.addView(header)
+
+            val scroll = ScrollView(this).apply { 
+                isVerticalScrollBarEnabled = false 
+            }
             val content = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(50, 50, 50, 50)
-                background = GradientDrawable().apply {
-                    setColor(Color.parseColor(COLOR_CARD))
-                    cornerRadius = 40f
-                    setStroke(2, Color.parseColor(COLOR_GOLD))
-                }
+                setPadding(40, 0, 40, 50)
             }
-            
-            val scroll = ScrollView(this).apply { addView(content) }
+            scroll.addView(content)
 
             content.addView(TextView(this).apply { 
-                text = note.title; textSize = 22f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD 
+                text = if (note.isPrivate) "🔒 ${note.title}" else note.title
+                textSize = 32f
+                setTextColor(Color.WHITE)
+                typeface = Typeface.create("sans-serif-black", Typeface.BOLD)
+                setPadding(0, 0, 0, 10)
             })
             
             content.addView(TextView(this).apply { 
-                text = "دسته: ${note.category}"; textSize = 14f; setTextColor(Color.parseColor(COLOR_GOLD)); setPadding(0, 10, 0, 20) 
+                text = "دسته: ${note.category}"
+                textSize = 16f
+                setTextColor(Color.parseColor(COLOR_GOLD))
+                setPadding(0, 0, 0, 20)
             })
 
-            // 🔧 نمایش عکس در صفحه مشاهده
-            if (note.imagePath != null) {
-                val bitmap = loadBitmap(note.imagePath!!, 800, 800)
-                if (bitmap != null) {
-                    content.addView(ImageView(this).apply {
-                        setImageBitmap(bitmap)
-                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 600)
-                        scaleType = ImageView.ScaleType.CENTER_CROP
-                        setPadding(0, 0, 0, 20)
-                    })
+            // 🔧 نمایش همه عکس‌ها
+            if (note.imagePaths.isNotEmpty()) {
+                for (path in note.imagePaths) {
+                    val bitmap = loadBitmap(path, 1000, 1000)
+                    if (bitmap != null) {
+                        content.addView(ImageView(this).apply {
+                            setImageBitmap(bitmap)
+                            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                            adjustViewBounds = true
+                            scaleType = ImageView.ScaleType.FIT_CENTER
+                            setPadding(0, 0, 0, 20)
+                        })
+                    }
                 }
             }
-            
+
             content.addView(TextView(this).apply { 
-                text = note.body; textSize = 16f; setTextColor(Color.WHITE); setLineSpacing(1.5f, 1.5f)
+                text = note.body
+                textSize = 18f
+                setTextColor(Color.WHITE)
+                setLineSpacing(1.5f, 1.5f)
+                setPadding(0, 0, 0, 30)
             })
 
             if (note.reminderEnabled && note.reminderAt > 0) {
@@ -782,19 +951,19 @@ class MainActivity : AppCompatActivity() {
                 val jDate = gregorianToJalali(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH))
                 val timeStr = SimpleDateFormat("HH:mm", Locale.getDefault()).format(note.reminderAt)
                 content.addView(TextView(this).apply { 
-                    text = "🔔 یادآور: ${jDate[2]}/${jDate[1]}/${jDate[0]} ساعت $timeStr"; textSize = 14f; setTextColor(Color.parseColor("#4CAF50")); setPadding(0, 20, 0, 10) 
+                    text = "🔔 یادآور: ${jDate[2]}/${jDate[1]}/${jDate[0]} ساعت $timeStr"
+                    textSize = 16f
+                    setTextColor(Color.parseColor("#4CAF50"))
+                    setPadding(0, 0, 0, 30) 
                 })
             }
 
             if (note.tasks.isNotEmpty()) {
-                content.addView(TextView(this).apply { 
-                    text = "کارها:"; textSize = 16f; setTextColor(Color.WHITE); setPadding(0, 20, 0, 10); typeface = Typeface.DEFAULT_BOLD
-                })
-
                 val progressTv = TextView(this).apply {
-                    textSize = 14f
+                    textSize = 18f
                     setTextColor(Color.parseColor(COLOR_GOLD))
-                    setPadding(0, 5, 0, 10)
+                    typeface = Typeface.DEFAULT_BOLD
+                    setPadding(0, 0, 0, 15)
                 }
                 
                 fun updateDialogProgress() {
@@ -802,51 +971,71 @@ class MainActivity : AppCompatActivity() {
                     progressTv.text = "پیشرفت: $done از ${note.tasks.size}"
                 }
                 updateDialogProgress()
+                
+                content.addView(TextView(this).apply {
+                    text = "کارها:"
+                    textSize = 20f
+                    setTextColor(Color.WHITE)
+                    typeface = Typeface.DEFAULT_BOLD
+                    setPadding(0, 0, 0, 10)
+                })
+                
                 content.addView(progressTv)
 
                 note.tasks.forEach { task ->
-                    val cb = CheckBox(this).apply {
+                    content.addView(CheckBox(this).apply {
                         text = task.text
                         isChecked = task.done
+                        textSize = 16f
                         setTextColor(Color.WHITE)
                         buttonTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
+                        setPadding(0, 10, 0, 10)
                         setOnCheckedChangeListener { _, checked ->
                             task.done = checked
                             updateDialogProgress()
                             saveNotes()
                         }
-                    }
-                    content.addView(cb)
+                    })
                 }
             }
 
-            val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 40, 0, 0) }
-            
-            btnRow.addView(Button(this).apply {
-                text = "ویرایش"
-                setTextColor(Color.BLACK)
-                background = GradientDrawable().apply { setColor(Color.parseColor(COLOR_GOLD)); cornerRadius = 100f }
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 15 }
-                setOnClickListener { 
-                    dialog.dismiss()
-                    editNote(note)
-                    showForm() 
+            content.addView(Button(this).apply {
+                text = "🗑️ حذف یادداشت"
+                setTextColor(Color.WHITE)
+                textSize = 16f
+                background = GradientDrawable().apply { 
+                    setColor(Color.parseColor("#B71C1C")) 
+                    cornerRadius = 100f 
+                }
+                setPadding(0, 20, 0, 20)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = 40
+                }
+                setOnClickListener {
+                    val deleteAction = {
+                        confirmDelete(note)
+                        dialog.dismiss()
+                    }
+                    if (note.isPrivate) {
+                        requestPin("برای حذف یادداشت خصوصی، رمز عبور را وارد کن") { valid -> if (valid) deleteAction() }
+                    } else {
+                        deleteAction()
+                    }
                 }
             })
-            
-            btnRow.addView(Button(this).apply {
-                text = "بستن"
-                setTextColor(Color.WHITE)
-                background = GradientDrawable().apply { setColor(Color.parseColor("#333333")); cornerRadius = 100f }
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                setOnClickListener { dialog.dismiss() }
-            })
-            
-            content.addView(btnRow)
 
-            dialog.setContentView(scroll)
+            rootLayout.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+            dialog.setContentView(rootLayout)
             dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-            dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            
+            val window = dialog.window
+            if (window != null) {
+                window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
+                window.setGravity(Gravity.CENTER)
+                window.setFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
+            }
+            
             dialog.show()
         }
 
@@ -1178,7 +1367,10 @@ class MainActivity : AppCompatActivity() {
         val existing = editingNoteId?.let { id -> notes.find { it.id == id } }
         val note = existing ?: Note(title = title, body = body, category = category)
         note.title = title; note.body = body; note.category = category; note.isPrivate = isPrivate
-        note.imagePath = currentDraftImagePath
+        
+        // 🔧 کپی کردن لیست عکس‌های موقت به یادداشت
+        note.imagePaths.clear()
+        note.imagePaths.addAll(currentDraftImagePaths)
 
         val oldDoneByText = note.tasks.associate { it.text to it.done }
         note.tasks.clear()
@@ -1204,8 +1396,8 @@ class MainActivity : AppCompatActivity() {
         categorySpinner.setSelection(0); privateCheckBox.isChecked = false; editingNoteId = null
         selectedReminderAt = 0L; selectedReminderEnabled = false; selectedRepeatMode = "none"
         selectedRepeatCount = 0; selectedRepeatInterval = 60; selectedRingtoneUri = ""
-        currentDraftImagePath = null
-        formImageStatusText.text = ""
+        currentDraftImagePaths.clear()
+        refreshDraftImages()
         reminderSummary.text = REMINDER_NONE_TEXT
         micStatusText.visibility = View.GONE
         micButton.text = "🎤 شروع ضبط صدا"
@@ -1217,13 +1409,10 @@ class MainActivity : AppCompatActivity() {
         val idx = categories.drop(1).indexOf(note.category); categorySpinner.setSelection(if (idx >= 0) idx else 0)
         taskInput.setText(note.tasks.joinToString("\n") { it.text })
         
-        currentDraftImagePath = note.imagePath
-        if (currentDraftImagePath != null) {
-            formImageStatusText.text = "📷 عکس موجود است (برای تغییر دوباره کلیک کنید)"
-            formImageStatusText.setTextColor(Color.parseColor(COLOR_GOLD))
-        } else {
-            formImageStatusText.text = ""
-        }
+        // 🔧 بارگذاری عکس‌ها برای ویرایش
+        currentDraftImagePaths.clear()
+        currentDraftImagePaths.addAll(note.imagePaths)
+        refreshDraftImages()
 
         selectedReminderAt = note.reminderAt; selectedReminderEnabled = note.reminderEnabled
         selectedRepeatMode = note.repeatMode; selectedRepeatCount = note.repeatCount
@@ -1364,7 +1553,12 @@ class MainActivity : AppCompatActivity() {
             notes.forEach { n ->
                 a.put(JSONObject().apply {
                     put("id", n.id); put("title", n.title); put("body", n.body); put("category", n.category); put("private", n.isPrivate); put("colorHex", n.colorHex)
-                    if (n.imagePath != null) put("imagePath", n.imagePath)
+                    
+                    // 🔧 ذخیره لیست عکس‌ها
+                    val imgArray = JSONArray()
+                    n.imagePaths.forEach { imgArray.put(it) }
+                    put("imagePaths", imgArray)
+
                     val ta = JSONArray(); n.tasks.forEach { ta.put(JSONObject().apply { put("id", it.id); put("text", it.text); put("done", it.done) }) }; put("tasks", ta)
                     put("reminderAt", n.reminderAt); put("reminderEnabled", n.reminderEnabled); put("repeatMode", n.repeatMode); put("repeatCount", n.repeatCount); put("repeatIntervalMinutes", n.repeatIntervalMinutes); put("ringtoneUri", n.ringtoneUri); put("reminderFiredCount", n.reminderFiredCount)
                 })
@@ -1382,9 +1576,19 @@ class MainActivity : AppCompatActivity() {
                 val o = a.optJSONObject(i) ?: continue
                 val t = mutableListOf<Task>(); val ta = o.optJSONArray("tasks") ?: JSONArray()
                 for (j in 0 until ta.length()) { val to = ta.optJSONObject(j) ?: continue; t.add(Task(id = to.optString("id").ifBlank { UUID.randomUUID().toString() }, text = to.optString("text"), done = to.optBoolean("done", false))) }
+                
+                // 🔧 خواندن لیست عکس‌ها
+                val imgPaths = mutableListOf<String>()
+                val imgArray = o.optJSONArray("imagePaths")
+                if (imgArray != null) {
+                    for (k in 0 until imgArray.length()) {
+                        imgPaths.add(imgArray.getString(k))
+                    }
+                }
+
                 notes.add(Note(
                     id = o.optString("id").ifBlank { UUID.randomUUID().toString() }, title = o.optString("title"), body = o.optString("body"), category = o.optString("category", "عمومی"), isPrivate = o.optBoolean("private", false), colorHex = o.optString("colorHex", ""), 
-                    imagePath = if (o.has("imagePath")) o.optString("imagePath") else null,
+                    imagePaths = imgPaths,
                     tasks = t, reminderAt = o.optLong("reminderAt", 0L), reminderEnabled = o.optBoolean("reminderEnabled", false), repeatMode = o.optString("repeatMode", "none"), repeatCount = o.optInt("repeatCount", 0), repeatIntervalMinutes = o.optInt("repeatIntervalMinutes", 60), ringtoneUri = o.optString("ringtoneUri", ""), reminderFiredCount = o.optInt("reminderFiredCount", 0)
                 ))
             }
@@ -1587,7 +1791,12 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        layout.addView(listLayout)
+        val scroll = ScrollView(this).apply {
+            addView(listLayout)
+            isVerticalScrollBarEnabled = false
+        }
+        layout.addView(scroll)
+
         dialog.setContentView(layout)
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
         dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
