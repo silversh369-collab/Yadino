@@ -39,13 +39,14 @@ android {
     }
 
     buildTypes {
-                getByName("release") {
+                        getByName("release") {
             isMinifyEnabled = false
 
             if (releaseSigningReady) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
