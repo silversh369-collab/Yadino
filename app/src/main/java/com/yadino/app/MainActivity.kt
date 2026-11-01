@@ -84,7 +84,67 @@ private const val COLOR_TEXT_PRIMARY = "#FFFFFF"
 private const val COLOR_TEXT_SECONDARY = "#A0A0A0"
 
 private const val REMINDER_NONE_TEXT = "یادآور تنظیم نشده است"
+// ================================================================
+// 🔐 سیستم چهار رمز مستقل Yadino
+// ================================================================
 
+private const val PIN_DELETE_KEY = "pin_delete_hash"
+private const val PIN_EDIT_KEY = "pin_edit_hash"
+private const val PIN_SETTINGS_KEY = "pin_settings_hash"
+private const val PIN_PRIVATE_KEY = "pin_private_hash"
+
+// راهنمای یادآوری هر رمز
+private const val PIN_DELETE_HINT_KEY = "pin_delete_hint"
+private const val PIN_EDIT_HINT_KEY = "pin_edit_hint"
+private const val PIN_SETTINGS_HINT_KEY = "pin_settings_hint"
+private const val PIN_PRIVATE_HINT_KEY = "pin_private_hint"
+
+// تعداد تلاش‌های ناموفق هر رمز
+private const val PIN_DELETE_ATTEMPTS_KEY = "pin_delete_attempts"
+private const val PIN_EDIT_ATTEMPTS_KEY = "pin_edit_attempts"
+private const val PIN_SETTINGS_ATTEMPTS_KEY = "pin_settings_attempts"
+private const val PIN_PRIVATE_ATTEMPTS_KEY = "pin_private_attempts"
+
+// مشخصات بخش‌های امنیتی
+private enum class SecurityArea(
+    val id: String,
+    val title: String,
+    val pinKey: String,
+    val hintKey: String,
+    val attemptsKey: String
+) {
+    DELETE(
+        "delete",
+        "حذف یادداشت‌ها",
+        PIN_DELETE_KEY,
+        PIN_DELETE_HINT_KEY,
+        PIN_DELETE_ATTEMPTS_KEY
+    ),
+
+    EDIT(
+        "edit",
+        "ویرایش یادداشت‌ها",
+        PIN_EDIT_KEY,
+        PIN_EDIT_HINT_KEY,
+        PIN_EDIT_ATTEMPTS_KEY
+    ),
+
+    SETTINGS(
+        "settings",
+        "تنظیمات",
+        PIN_SETTINGS_KEY,
+        PIN_SETTINGS_HINT_KEY,
+        PIN_SETTINGS_ATTEMPTS_KEY
+    ),
+
+    PRIVATE(
+        "private",
+        "یادداشت‌های خصوصی",
+        PIN_PRIVATE_KEY,
+        PIN_PRIVATE_HINT_KEY,
+        PIN_PRIVATE_ATTEMPTS_KEY
+    )
+}
 private val persianMonths = arrayOf(
     "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
     "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"
@@ -579,7 +639,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showSettingsDialog() {
+    // ================================================================
+// 🔐 ورود امن به تنظیمات
+// ================================================================
+
+private fun showSettingsDialog() {
+    requestSecurityPin(
+        SecurityArea.SETTINGS,
+        "برای ورود به تنظیمات، رمز اختصاصی تنظیمات را وارد کن."
+    ) { valid ->
+        if (valid) {
+            showSettingsDialogContent()
+        }
+    }
+}
+
+    private fun showSettingsDialogContent() {
         val options = arrayOf("🔐 تغییر رمز عبور", "⭐️ امتیاز به برنامه در مایکت")
         showCustomListDialog("تنظیمات", options) { which ->
             if (which == 0) {
@@ -1682,6 +1757,401 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
+    // ================================================================
+// 🔐 ساخت رمز اختصاصی برای هر بخش همراه با راهنمای یادآوری
+// ================================================================
+
+private fun showSetSecurityPinDialog(
+    area: SecurityArea,
+    onSuccess: () -> Unit
+) {
+    val dialog = Dialog(this)
+    dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+    val content = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(40, 40, 40, 40)
+        background = GradientDrawable().apply {
+            setColor(Color.parseColor(COLOR_CARD))
+            cornerRadius = 40f
+            setStroke(2, Color.parseColor(COLOR_GOLD))
+        }
+    }
+
+    content.addView(TextView(this).apply {
+        text = "🔐 تعیین رمز ${area.title}"
+        textSize = 19f
+        setTextColor(Color.WHITE)
+        typeface = Typeface.DEFAULT_BOLD
+        setPadding(0, 0, 0, 20)
+    })
+
+    content.addView(TextView(this).apply {
+        text = "برای این بخش یک رمز مستقل انتخاب کن."
+        textSize = 14f
+        setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+        setPadding(0, 0, 0, 15)
+    })
+
+    fun createPasswordInput(hintText: String): EditText {
+        return EditText(this).apply {
+            hint = hintText
+            setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+            setTextColor(Color.WHITE)
+            inputType = InputType.TYPE_CLASS_TEXT or
+                    InputType.TYPE_TEXT_VARIATION_PASSWORD
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#202020"))
+                cornerRadius = 20f
+                setStroke(1, Color.parseColor(COLOR_TEXT_SECONDARY))
+            }
+            setPadding(30, 25, 30, 25)
+        }
+    }
+
+    val pinInput = createPasswordInput("رمز جدید (حداقل ۴ کاراکتر)")
+    content.addView(pinInput)
+
+    val confirmInput = createPasswordInput("تکرار رمز جدید")
+    content.addView(confirmInput.apply {
+        val params = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        params.topMargin = 15
+        layoutParams = params
+    })
+
+    val hintInput = EditText(this).apply {
+        hint = "راهنمای یادآوری رمز"
+        setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+        setTextColor(Color.WHITE)
+        inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        minLines = 2
+        maxLines = 3
+        gravity = Gravity.TOP
+        background = GradientDrawable().apply {
+            setColor(Color.parseColor("#202020"))
+            cornerRadius = 20f
+            setStroke(1, Color.parseColor(COLOR_TEXT_SECONDARY))
+        }
+        setPadding(30, 25, 30, 25)
+    }
+
+    content.addView(hintInput.apply {
+        val params = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        params.topMargin = 15
+        layoutParams = params
+    })
+
+    content.addView(TextView(this).apply {
+        text = "راهنما فقط پس از ۳ بار ورود رمز اشتباه نمایش داده می‌شود و امکان تغییر رمز را نمی‌دهد."
+        textSize = 12f
+        setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+        setPadding(0, 15, 0, 0)
+    })
+
+    val btnRow = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setPadding(0, 25, 0, 0)
+    }
+
+    btnRow.addView(Button(this).apply {
+        text = "لغو"
+        setTextColor(Color.WHITE)
+        background = GradientDrawable().apply {
+            setColor(Color.parseColor("#333333"))
+            cornerRadius = 100f
+        }
+        layoutParams = LinearLayout.LayoutParams(
+            0,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            1f
+        ).apply {
+            marginEnd = 15
+        }
+        setOnClickListener {
+            dialog.dismiss()
+        }
+    })
+
+    btnRow.addView(Button(this).apply {
+        text = "ذخیره رمز"
+        setTextColor(Color.BLACK)
+        background = GradientDrawable().apply {
+            setColor(Color.parseColor(COLOR_GOLD))
+            cornerRadius = 100f
+        }
+        layoutParams = LinearLayout.LayoutParams(
+            0,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            1f
+        )
+
+        setOnClickListener {
+            val pin = pinInput.text.toString()
+            val confirmPin = confirmInput.text.toString()
+            val hint = hintInput.text.toString().trim()
+
+            when {
+                pin.length < 4 -> {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "رمز باید حداقل ۴ کاراکتر باشد.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+
+                pin != confirmPin -> {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "تکرار رمز با رمز اصلی یکسان نیست.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+
+                hint.isBlank() -> {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "راهنمای یادآوری را وارد کن.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+
+                else -> {
+                    saveSecurityPin(area, pin, hint)
+
+                    dialog.dismiss()
+
+                    Toast.makeText(
+                        this@MainActivity,
+                        "رمز ${area.title} با موفقیت ذخیره شد.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+
+                    onSuccess()
+                }
+            }
+        }
+    })
+
+    content.addView(btnRow)
+
+    val scrollView = ScrollView(this).apply {
+        addView(content)
+    }
+
+    dialog.setContentView(scrollView)
+    dialog.window?.setBackgroundDrawableResource(
+        android.R.color.transparent
+    )
+    dialog.show()
+    dialog.window?.setLayout(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+    )
+}
+
+// ================================================================
+// 🔐 ورود با رمز اختصاصی و نمایش راهنمای یادآوری پس از سه خطا
+// ================================================================
+
+private fun requestSecurityPin(
+    area: SecurityArea,
+    message: String,
+    callback: (Boolean) -> Unit
+) {
+    // اگر هنوز برای این بخش رمزی تعیین نشده باشد،
+    // ابتدا پنجره ساخت رمز نمایش داده می‌شود.
+    if (!isSecurityPinConfigured(area)) {
+        showSetSecurityPinDialog(area) {
+            callback(true)
+        }
+        return
+    }
+
+    val dialog = Dialog(this)
+    dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+    val content = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(40, 40, 40, 40)
+        background = GradientDrawable().apply {
+            setColor(Color.parseColor(COLOR_CARD))
+            cornerRadius = 40f
+            setStroke(2, Color.parseColor(COLOR_GOLD))
+        }
+    }
+
+    content.addView(TextView(this).apply {
+        text = "🔐 احراز هویت: ${area.title}"
+        textSize = 19f
+        setTextColor(Color.WHITE)
+        typeface = Typeface.DEFAULT_BOLD
+        setPadding(0, 0, 0, 20)
+    })
+
+    content.addView(TextView(this).apply {
+        text = message
+        textSize = 15f
+        setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+        setPadding(0, 0, 0, 20)
+    })
+
+    val pinInput = EditText(this).apply {
+        hint = "رمز اختصاصی این بخش"
+        setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+        setTextColor(Color.WHITE)
+        inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_PASSWORD
+        background = GradientDrawable().apply {
+            setColor(Color.parseColor("#202020"))
+            cornerRadius = 20f
+            setStroke(1, Color.parseColor(COLOR_TEXT_SECONDARY))
+        }
+        setPadding(30, 30, 30, 30)
+    }
+
+    content.addView(pinInput)
+
+    val statusText = TextView(this).apply {
+        text = ""
+        textSize = 13f
+        setTextColor(Color.parseColor("#FF7777"))
+        setPadding(0, 15, 0, 0)
+        visibility = View.GONE
+    }
+
+    content.addView(statusText)
+
+    val hintText = TextView(this).apply {
+        text = ""
+        textSize = 14f
+        setTextColor(Color.parseColor(COLOR_GOLD))
+        setPadding(20, 20, 20, 20)
+        background = GradientDrawable().apply {
+            setColor(Color.parseColor("#29251A"))
+            cornerRadius = 20f
+        }
+        visibility = View.GONE
+    }
+
+    content.addView(hintText)
+
+    val btnRow = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setPadding(0, 25, 0, 0)
+    }
+
+    btnRow.addView(Button(this).apply {
+        text = "لغو"
+        setTextColor(Color.WHITE)
+        background = GradientDrawable().apply {
+            setColor(Color.parseColor("#333333"))
+            cornerRadius = 100f
+        }
+
+        layoutParams = LinearLayout.LayoutParams(
+            0,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            1f
+        ).apply {
+            marginEnd = 15
+        }
+
+        setOnClickListener {
+            dialog.dismiss()
+            callback(false)
+        }
+    })
+
+    btnRow.addView(Button(this).apply {
+        text = "تأیید رمز"
+        setTextColor(Color.BLACK)
+        background = GradientDrawable().apply {
+            setColor(Color.parseColor(COLOR_GOLD))
+            cornerRadius = 100f
+        }
+
+        layoutParams = LinearLayout.LayoutParams(
+            0,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            1f
+        )
+
+        setOnClickListener {
+            val enteredPin = pinInput.text.toString()
+
+            if (enteredPin.isBlank()) {
+                Toast.makeText(
+                    this@MainActivity,
+                    "رمز عبور را وارد کن.",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@setOnClickListener
+            }
+
+            if (verifySecurityPin(area, enteredPin)) {
+
+                resetSecurityPinAttempts(area)
+
+                dialog.dismiss()
+                callback(true)
+
+            } else {
+
+                val attempts = increaseSecurityPinAttempts(area)
+
+                pinInput.text.clear()
+
+                statusText.visibility = View.VISIBLE
+
+                if (attempts >= 3) {
+
+                    // پس از سه تلاش اشتباه، فقط راهنمای یادآوری نمایش داده می‌شود.
+                    statusText.text = "سه بار رمز اشتباه وارد شد."
+
+                    hintText.text =
+                        "💡 راهنمای یادآوری رمز:\n\n${getSecurityPinHint(area)}"
+
+                    hintText.visibility = View.VISIBLE
+
+                } else {
+
+                    val remaining = 3 - attempts
+
+                    statusText.text =
+                        "رمز اشتباه است. $remaining تلاش دیگر باقی مانده است."
+
+                }
+            }
+        }
+    })
+
+    content.addView(btnRow)
+
+    val scrollView = ScrollView(this).apply {
+        addView(content)
+    }
+
+    dialog.setContentView(scrollView)
+
+    dialog.window?.setBackgroundDrawableResource(
+        android.R.color.transparent
+    )
+
+    dialog.show()
+
+    dialog.window?.setLayout(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+    )
+}
+
     private fun requestPin(message: String, callback: (Boolean) -> Unit) {
         val dialog = Dialog(this)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -1743,6 +2213,75 @@ class MainActivity : AppCompatActivity() {
         dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         dialog.show()
     }
+
+    // ================================================================
+// 🔐 توابع پایه مدیریت چهار رمز مستقل
+// ================================================================
+
+// تبدیل رمز به Hash
+private fun createSecurityPinHash(pin: String): String {
+    return MessageDigest.getInstance("SHA-256")
+        .digest(pin.toByteArray())
+        .joinToString("") { "%02x".format(it) }
+}
+
+// بررسی اینکه برای یک بخش رمز تعریف شده یا نه
+private fun isSecurityPinConfigured(area: SecurityArea): Boolean {
+    return !securePrefs.getString(area.pinKey, null).isNullOrBlank()
+}
+
+// ذخیره رمز و راهنمای یادآوری
+private fun saveSecurityPin(
+    area: SecurityArea,
+    pin: String,
+    hint: String
+) {
+    securePrefs.edit()
+        .putString(area.pinKey, createSecurityPinHash(pin))
+        .putString(area.hintKey, hint.trim())
+        .putInt(area.attemptsKey, 0)
+        .apply()
+}
+
+// دریافت راهنمای یادآوری رمز
+private fun getSecurityPinHint(area: SecurityArea): String {
+    return securePrefs.getString(area.hintKey, null)
+        ?: "برای این رمز راهنمایی ثبت نشده است."
+}
+
+// دریافت تعداد تلاش‌های ناموفق
+private fun getSecurityPinAttempts(area: SecurityArea): Int {
+    return securePrefs.getInt(area.attemptsKey, 0)
+}
+
+// افزایش تعداد تلاش‌های ناموفق
+private fun increaseSecurityPinAttempts(area: SecurityArea): Int {
+    val attempts = getSecurityPinAttempts(area) + 1
+
+    securePrefs.edit()
+        .putInt(area.attemptsKey, attempts)
+        .apply()
+
+    return attempts
+}
+
+// صفر کردن شمارنده پس از ورود موفق
+private fun resetSecurityPinAttempts(area: SecurityArea) {
+    securePrefs.edit()
+        .putInt(area.attemptsKey, 0)
+        .apply()
+}
+
+// بررسی صحت رمز واردشده
+private fun verifySecurityPin(
+    area: SecurityArea,
+    enteredPin: String
+): Boolean {
+    val savedHash = securePrefs.getString(area.pinKey, null)
+        ?: return false
+
+    return savedHash == createSecurityPinHash(enteredPin)
+}
 
     private fun showCustomListDialog(title: String, items: Array<String>, onItemSelected: (Int) -> Unit) {
         val dialog = Dialog(this)
