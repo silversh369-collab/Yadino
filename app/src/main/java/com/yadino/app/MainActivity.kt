@@ -959,16 +959,21 @@ private fun showSettingsDialog() {
                 text = "✏️ ویرایش"
                 textSize = 16f
                 setTextColor(Color.parseColor(COLOR_GOLD))
-                setOnClickListener {
-                    dialog.dismiss()
-                    if (note.isPrivate) {
-                        requestPin("برای ویرایش، رمز عبور را وارد کن") { valid -> if (valid) { editNote(note); showForm() } }
-                    } else {
-                        editNote(note)
-                        showForm()
-                    }
-                }
-            }
+                
+setOnClickListener {
+    dialog.dismiss()
+
+    requestSecurityPin(
+        SecurityArea.EDIT,
+        "برای ویرایش این یادداشت، رمز اختصاصی ویرایش را وارد کن."
+    ) { valid ->
+        if (valid) {
+            editNote(note)
+            showForm()
+        }
+    }
+}
+
             header.addView(editBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             
             rootLayout.addView(header)
