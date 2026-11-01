@@ -972,6 +972,7 @@ private fun showSettingsDialog() {
                         }
                     }
                 }
+            }
 
             header.addView(editBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             
