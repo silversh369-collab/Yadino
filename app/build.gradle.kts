@@ -1,3 +1,4 @@
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -42,8 +43,6 @@ android {
             isMinifyEnabled = false
             if (releaseSigningReady) {
                 signingConfig = signingConfigs.getByName("release")
-            } else {
-                throw GradleException("Release signing secrets are missing.")
             }
         }
     }
@@ -55,6 +54,42 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+    }
+}
+
+// اعتبارسنجی اطلاعات امضای انتشار فقط هنگام ساخت خروجی Release اجرا می‌شود.
+// بنابراین ساخت Debug و بررسی‌های معمول CI به secretهای انتشار وابسته نیستند.
+val validateReleaseSigning = tasks.register("validateReleaseSigning") {
+    group = "verification"
+    description = "Checks that all release signing secrets and the keystore file are available."
+
+    doLast {
+        val missingSecrets = mutableListOf<String>()
+
+        if (releaseStoreFile.isNullOrBlank()) missingSecrets.add("KEYSTORE_FILE")
+        if (releaseStorePassword.isNullOrBlank()) missingSecrets.add("KEYSTORE_PASSWORD")
+        if (releaseKeyAlias.isNullOrBlank()) missingSecrets.add("KEY_ALIAS")
+        if (releaseKeyPassword.isNullOrBlank()) missingSecrets.add("KEY_PASSWORD")
+
+        if (missingSecrets.isNotEmpty()) {
+            throw GradleException(
+                "Release signing secrets are missing: ${missingSecrets.joinToString(", ")}"
+            )
+        }
+
+        val keystore = file(releaseStoreFile!!)
+        if (!keystore.isFile) {
+            throw GradleException(
+                "Release keystore file was not found: ${keystore.absolutePath}"
+            )
+        }
+    }
+}
+
+// فقط taskهای ساخت APK/AAB انتشار به اعتبارسنجی امضا وابسته هستند.
+tasks.configureEach {
+    if (name == "assembleRelease" || name == "bundleRelease") {
+        dependsOn(validateReleaseSigning)
     }
 }
 
