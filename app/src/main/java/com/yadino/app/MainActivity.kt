@@ -69,6 +69,8 @@ import java.util.UUID
 private const val TAG = "Yadino"
 private const val STORAGE_NAME = "yadino_secure_storage"
 private const val NOTES_KEY = "notes_json"
+private const val CATEGORIES_KEY = "categories_json"
+private const val CATEGORIES_MIGRATED_KEY = "categories_migrated_v1"
 private const val PIN_KEY = "pin_hash"
 private const val CHANNEL_ID = "yadino_reminders"
 private const val CHANNEL_ID_SILENT = "yadino_reminders_silent"
@@ -176,7 +178,10 @@ data class Note(
 
 class MainActivity : AppCompatActivity() {
 
-    private val categories = listOf("همه دسته‌ها", "عمومی", "کار", "شخصی", "خرید", "درس", "ایده‌ها")
+    private val categories = mutableListOf<String>()
+    private val defaultCategories = listOf("عمومی", "کار", "شخصی", "خرید", "درس", "ایده‌ها")
+    private val allCategoriesLabel = "همه دسته‌ها"
+    private val noCategoryLabel = "بدون دسته"
     private val notes = mutableListOf<Note>()
 
     private lateinit var titleInput: EditText
@@ -259,6 +264,7 @@ class MainActivity : AppCompatActivity() {
         try {
             initializeSecureStorage()
             loadNotes()
+            loadCategories()
             createNotificationChannel()
             buildScreen()
             renderNotes()
@@ -451,7 +457,7 @@ class MainActivity : AppCompatActivity() {
         formContainer.addView(bodyInput, matchWidth())
 
         categorySpinner = Spinner(this)
-        categorySpinner.adapter = spinnerAdapter(categories.drop(1))
+        categorySpinner.adapter = spinnerAdapter(categoryOptions())
         formContainer.addView(categorySpinner, matchWidth())
 
         privateCheckBox = CheckBox(this).apply { 
@@ -553,7 +559,7 @@ class MainActivity : AppCompatActivity() {
         content.addView(formContainer)
 
         filterSpinner = Spinner(this)
-        filterSpinner.adapter = spinnerAdapter(categories)
+        filterSpinner.adapter = spinnerAdapter(filterOptions())
         filterSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) { renderNotes() }
@@ -655,16 +661,22 @@ private fun showSettingsDialog() {
 }
 
     private fun showSettingsDialogContent() {
-        val options = arrayOf("🔐 تغییر رمز عبور", "⭐️ امتیاز به برنامه در مایکت")
+        val options = arrayOf(
+            "📁 مدیریت دسته‌ها",
+            "🔐 تغییر رمز عبور",
+            "⭐️ امتیاز به برنامه در مایکت"
+        )
         showCustomListDialog("تنظیمات", options) { which ->
-            if (which == 0) {
-                showSetPinDialog { Toast.makeText(this, "رمز عبور با موفقیت تغییر کرد", Toast.LENGTH_SHORT).show() }
-            } else {
-                try {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://myket.ir/app/com.yadino.app"))
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    Toast.makeText(this, "مایکت یافت نشد", Toast.LENGTH_SHORT).show()
+            when (which) {
+                0 -> showCategoryManagementDialog()
+                1 -> showSetPinDialog { Toast.makeText(this, "رمز عبور با موفقیت تغییر کرد", Toast.LENGTH_SHORT).show() }
+                2 -> {
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://myket.ir/app/com.yadino.app"))
+                        startActivity(intent)
+                    } catch (e: Exception) {
+                        Toast.makeText(this, "مایکت یافت نشد", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         }
@@ -691,9 +703,222 @@ private fun showSettingsDialog() {
     }
 
     private fun renderNotes() {
-        val selectedCategory = if (::filterSpinner.isInitialized) filterSpinner.selectedItem?.toString() ?: "همه دسته‌ها" else "همه دسته‌ها"
-        val visibleNotes = notes.filter { selectedCategory == "همه دسته‌ها" || it.category == selectedCategory }
+        val selectedCategory = if (::filterSpinner.isInitialized) filterSpinner.selectedItem?.toString() ?: allCategoriesLabel else allCategoriesLabel
+        val visibleNotes = notes.filter { note ->
+            when (selectedCategory) {
+                allCategoriesLabel -> true
+                noCategoryLabel -> note.category.isBlank() || note.category !in categories
+                else -> note.category == selectedCategory
+            }
+        }
         noteAdapter.updateData(visibleNotes)
+    }
+
+    // دسته‌ها به‌صورت مستقل و رمزگذاری‌شده در همان EncryptedSharedPreferences ذخیره می‌شوند.
+    private fun saveCategories() {
+        try {
+            val array = JSONArray()
+            categories.forEach { array.put(it) }
+            securePrefs.edit()
+                .putString(CATEGORIES_KEY, array.toString())
+                .putBoolean(CATEGORIES_MIGRATED_KEY, true)
+                .apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "Save categories failed", e)
+        }
+    }
+
+    // مهاجرت یک‌باره: دسته‌های قدیمی و دسته‌های موجود در یادداشت‌ها حفظ می‌شوند.
+    private fun loadCategories() {
+        categories.clear()
+        val stored = securePrefs.getString(CATEGORIES_KEY, null)
+        if (stored != null) {
+            try {
+                val array = JSONArray(stored)
+                for (i in 0 until array.length()) {
+                    val name = array.optString(i).trim()
+                    if (name.isNotBlank() && name != allCategoriesLabel && name != noCategoryLabel && name !in categories) {
+                        categories.add(name)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Load categories failed", e)
+            }
+        } else {
+            // فقط در اولین مهاجرت از فهرست پیش‌فرض قدیمی استفاده می‌کنیم.
+            categories.addAll(defaultCategories)
+            notes.map { it.category.trim() }
+                .filter { it.isNotBlank() && it != allCategoriesLabel && it != noCategoryLabel }
+                .forEach { if (it !in categories) categories.add(it) }
+            saveCategories()
+        }
+        refreshCategorySpinners()
+    }
+
+    private fun categoryOptions(): List<String> = categories + noCategoryLabel
+
+    private fun filterOptions(): List<String> = listOf(allCategoriesLabel) + categories + noCategoryLabel
+
+    private fun refreshCategorySpinners(selectedFormCategory: String? = null, selectedFilter: String? = null) {
+        if (::categorySpinner.isInitialized) {
+            val current = selectedFormCategory ?: categorySpinner.selectedItem?.toString()
+            categorySpinner.adapter = spinnerAdapter(categoryOptions())
+            val index = categoryOptions().indexOf(current).let { if (it >= 0) it else 0 }
+            categorySpinner.setSelection(index, false)
+        }
+        if (::filterSpinner.isInitialized) {
+            val current = selectedFilter ?: filterSpinner.selectedItem?.toString()
+            filterSpinner.adapter = spinnerAdapter(filterOptions())
+            val index = filterOptions().indexOf(current).let { if (it >= 0) it else 0 }
+            filterSpinner.setSelection(index, false)
+        }
+        if (::noteAdapter.isInitialized) renderNotes()
+    }
+
+    private fun showCategoryManagementDialog() {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(36, 36, 36, 36)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor(COLOR_CARD))
+                cornerRadius = 36f
+                setStroke(2, Color.parseColor(COLOR_GOLD))
+            }
+        }
+        root.addView(TextView(this).apply {
+            text = "مدیریت دسته‌ها"
+            textSize = 21f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor(COLOR_GOLD))
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 22)
+        })
+
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun rebuildList() {
+            list.removeAllViews()
+            if (categories.isEmpty()) {
+                list.addView(TextView(this).apply {
+                    text = "هنوز دسته‌ای ساخته نشده است."
+                    setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+                    gravity = Gravity.CENTER
+                    setPadding(10, 25, 10, 25)
+                })
+            }
+            categories.forEach { category ->
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(8, 8, 8, 8)
+                }
+                row.addView(TextView(this).apply {
+                    text = category
+                    textSize = 16f
+                    setTextColor(Color.WHITE)
+                    gravity = Gravity.CENTER_VERTICAL
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                row.addView(TextView(this).apply {
+                    text = "✏️"
+                    textSize = 19f
+                    gravity = Gravity.CENTER
+                    setPadding(16, 12, 16, 12)
+                    setOnClickListener {
+                        showCustomInputDialog("تغییر نام دسته", "نام جدید دسته", category, InputType.TYPE_CLASS_TEXT) { entered ->
+                            val newName = entered.trim()
+                            when {
+                                newName.isBlank() -> Toast.makeText(this@MainActivity, "نام دسته نمی‌تواند خالی باشد.", Toast.LENGTH_SHORT).show()
+                                newName == allCategoriesLabel || newName == noCategoryLabel -> Toast.makeText(this@MainActivity, "این نام برای فیلترهای سیستمی رزرو شده است.", Toast.LENGTH_SHORT).show()
+                                newName != category && newName in categories -> Toast.makeText(this@MainActivity, "این دسته از قبل وجود دارد.", Toast.LENGTH_SHORT).show()
+                                else -> {
+                                    val index = categories.indexOf(category)
+                                    if (index >= 0) categories[index] = newName
+                                    notes.filter { it.category == category }.forEach { it.category = newName }
+                                    saveCategories()
+                                    saveNotes()
+                                    refreshCategorySpinners(newName, newName)
+                                    rebuildList()
+                                    Toast.makeText(this@MainActivity, "نام دسته تغییر کرد.", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    }
+                })
+                row.addView(TextView(this).apply {
+                    text = "🗑️"
+                    textSize = 19f
+                    gravity = Gravity.CENTER
+                    setPadding(16, 12, 8, 12)
+                    setOnClickListener {
+                        showCustomConfirmDialog(
+                            "حذف دسته",
+                            "دسته «$category» حذف شود؟ یادداشت‌های آن حذف نمی‌شوند و به «بدون دسته» منتقل می‌شوند."
+                        ) {
+                            categories.remove(category)
+                            notes.filter { it.category == category }.forEach { it.category = "" }
+                            saveCategories()
+                            saveNotes()
+                            refreshCategorySpinners(noCategoryLabel, noCategoryLabel)
+                            rebuildList()
+                            Toast.makeText(this@MainActivity, "دسته حذف شد؛ یادداشت‌ها حفظ شدند.", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                })
+                list.addView(row)
+                list.addView(View(this).apply {
+                    setBackgroundColor(Color.parseColor("#333333"))
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
+                })
+            }
+        }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            addView(list)
+        }
+        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        val addButton = Button(this).apply {
+            text = "＋ افزودن دسته جدید"
+            setTextColor(Color.BLACK)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor(COLOR_GOLD))
+                cornerRadius = 100f
+            }
+            setOnClickListener {
+                showCustomInputDialog("دسته جدید", "نام دسته را وارد کن", "", InputType.TYPE_CLASS_TEXT) { entered ->
+                    val name = entered.trim()
+                    when {
+                        name.isBlank() -> Toast.makeText(this@MainActivity, "نام دسته را وارد کن.", Toast.LENGTH_SHORT).show()
+                        name == allCategoriesLabel || name == noCategoryLabel -> Toast.makeText(this@MainActivity, "این نام برای فیلترهای سیستمی رزرو شده است.", Toast.LENGTH_SHORT).show()
+                        name in categories -> Toast.makeText(this@MainActivity, "این دسته از قبل وجود دارد.", Toast.LENGTH_SHORT).show()
+                        else -> {
+                            categories.add(name)
+                            saveCategories()
+                            refreshCategorySpinners(name)
+                            rebuildList()
+                            Toast.makeText(this@MainActivity, "دسته جدید اضافه شد.", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+        }
+        root.addView(addButton, matchWidth())
+        val closeButton = Button(this).apply {
+            text = "بستن"
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply { setColor(Color.parseColor("#333333")); cornerRadius = 100f }
+            setOnClickListener { dialog.dismiss() }
+        }
+        root.addView(closeButton, matchWidth())
+
+        rebuildList()
+        dialog.setContentView(root)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.show()
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.8f).toInt())
     }
 
     private fun loadBitmap(filePath: String, reqWidth: Int, reqHeight: Int): Bitmap? {
@@ -807,7 +1032,7 @@ private fun showSettingsDialog() {
             holder.title.text = if (note.isPrivate) "🔒 ${note.title}" else note.title
 
             holder.category.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
-            holder.category.text = "دسته: ${note.category}"
+            holder.category.text = "دسته: ${note.category.ifBlank { noCategoryLabel }}"
 
             // 🔧 نمایش عکس اول به همراه بج تعداد
             holder.noteImageContainer.removeAllViews()
@@ -1435,7 +1660,8 @@ private fun showSettingsDialog() {
     private fun saveCurrentNote() {
         val title = titleInput.text.toString().trim(); val body = bodyInput.text.toString().trim()
         if (title.isBlank() && body.isBlank()) { Toast.makeText(this, "عنوان یا متن خالی است", Toast.LENGTH_SHORT).show(); return }
-        val category = categorySpinner.selectedItem?.toString() ?: "عمومی"
+        val selectedCategory = categorySpinner.selectedItem?.toString() ?: noCategoryLabel
+        val category = if (selectedCategory == noCategoryLabel) "" else selectedCategory
         val isPrivate = privateCheckBox.isChecked
 
         if (isPrivate && securePrefs.getString(PIN_KEY, null).isNullOrBlank()) showSetPinDialog { persistCurrentNote(title, body, category, isPrivate) }
@@ -1486,7 +1712,9 @@ private fun showSettingsDialog() {
     private fun editNote(note: Note) {
         editingNoteId = note.id; titleInput.setText(note.title); bodyInput.setText(note.body)
         privateCheckBox.isChecked = note.isPrivate
-        val idx = categories.drop(1).indexOf(note.category); categorySpinner.setSelection(if (idx >= 0) idx else 0)
+        val formCategories = categoryOptions()
+        val categoryIndex = formCategories.indexOf(if (note.category.isBlank()) noCategoryLabel else note.category)
+        categorySpinner.setSelection(if (categoryIndex >= 0) categoryIndex else 0)
         taskInput.setText(note.tasks.joinToString("\n") { it.text })
         
         // 🔧 بارگذاری عکس‌ها برای ویرایش
@@ -2347,7 +2575,7 @@ private fun verifySecurityPin(
         dialog.show()
     }
 
-    private fun showCustomInputDialog(title: String, hint: String, initialText: String, onConfirm: (String) -> Unit) {
+    private fun showCustomInputDialog(title: String, hint: String, initialText: String, inputType: Int = InputType.TYPE_CLASS_NUMBER, onConfirm: (String) -> Unit) {
         val dialog = Dialog(this)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
@@ -2374,7 +2602,7 @@ private fun verifySecurityPin(
             this.hint = hint
             setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
             setTextColor(Color.WHITE)
-            inputType = InputType.TYPE_CLASS_NUMBER
+            this.inputType = inputType
             setText(initialText)
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#202020"))
