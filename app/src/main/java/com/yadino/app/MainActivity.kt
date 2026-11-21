@@ -155,7 +155,9 @@ private val persianMonths = arrayOf(
 data class Task(
     val id: String = UUID.randomUUID().toString(),
     var text: String,
-    var done: Boolean = false
+    var done: Boolean = false,
+    var isGroupHeader: Boolean = false,
+    var groupId: String = ""
 )
 
 data class Note(
@@ -467,7 +469,11 @@ class MainActivity : AppCompatActivity() {
         }
         formContainer.addView(privateCheckBox)
 
-        taskInput = EditText(this).apply { hint = "کارها (هر خط یک کار)"; minLines = 2; gravity = Gravity.TOP or Gravity.RIGHT }
+        taskInput = EditText(this).apply {
+            hint = "هر خط یک کار؛ برای ساخت سرتیتر، ابتدای خط ◆ بگذار\nمثال: ◆ کارهای روزانه"
+            minLines = 3
+            gravity = Gravity.TOP or Gravity.RIGHT
+        }
         styleInput(taskInput)
         taskInput.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) speechTarget = taskInput }
         formContainer.addView(taskInput, matchWidth())
@@ -1105,25 +1111,15 @@ private fun showSettingsDialog() {
                     holder.progressText.visibility = View.VISIBLE
                     holder.tasksLayout.removeAllViews()
 
-                    fun updateProgressUI() {
-                        val done = note.tasks.count { it.done }
-                        holder.progressText.text = "پیشرفت: $done از ${note.tasks.size}"
-                    }
-                    updateProgressUI()
-
-                    note.tasks.forEach { task ->
-                        val cb = CheckBox(holder.card.context).apply {
-                            text = task.text
-                            isChecked = task.done
-                            setTextColor(textColor)
-                            buttonTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
-                            setOnCheckedChangeListener { _, checked ->
-                                task.done = checked
-                                updateProgressUI()
-                                saveNotes()
-                            }
-                        }
-                        holder.tasksLayout.addView(cb)
+                    addTaskViews(
+                        container = holder.tasksLayout,
+                        note = note,
+                        textColor = textColor,
+                        progressView = holder.progressText,
+                        baseTextSize = 14f
+                    ) {
+                        saveNotes()
+                        renderNotes()
                     }
                 } else {
                     holder.tasksLayout.visibility = View.GONE
@@ -1272,8 +1268,9 @@ private fun showSettingsDialog() {
                 }
                 
                 fun updateDialogProgress() {
-                    val done = note.tasks.count { it.done }
-                    progressTv.text = "پیشرفت: $done از ${note.tasks.size}"
+                    val regularTasks = note.tasks.filter { !it.isGroupHeader }
+                    val done = regularTasks.count { it.done }
+                    progressTv.text = "پیشرفت: $done از ${regularTasks.size}"
                 }
                 updateDialogProgress()
                 
@@ -1287,21 +1284,25 @@ private fun showSettingsDialog() {
                 
                 content.addView(progressTv)
 
-                note.tasks.forEach { task ->
-                    content.addView(CheckBox(this).apply {
-                        text = task.text
-                        isChecked = task.done
-                        textSize = 16f
-                        setTextColor(Color.WHITE)
-                        buttonTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
-                        setPadding(0, 10, 0, 10)
-                        setOnCheckedChangeListener { _, checked ->
-                            task.done = checked
-                            updateDialogProgress()
-                            saveNotes()
-                        }
-                    })
+                val dialogTasksLayout = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
                 }
+                lateinit var refreshDialogTasks: () -> Unit
+                refreshDialogTasks = {
+                    addTaskViews(
+                        container = dialogTasksLayout,
+                        note = note,
+                        textColor = Color.WHITE,
+                        progressView = progressTv,
+                        baseTextSize = 16f
+                    ) {
+                        updateDialogProgress()
+                        saveNotes()
+                        refreshDialogTasks()
+                    }
+                }
+                refreshDialogTasks()
+                content.addView(dialogTasksLayout)
             }
 
             content.addView(Button(this).apply {
@@ -1669,6 +1670,64 @@ private fun showSettingsDialog() {
         else persistCurrentNote(title, body, category, false)
     }
 
+    /**
+     * نمایش یکسان کارها در کارت یادداشت و پنجره جزئیات.
+     * کارهای مستقل و فرزندهای گروه در یک شماره‌گذاری پیوسته نمایش داده می‌شوند.
+     */
+    private fun addTaskViews(
+        container: LinearLayout,
+        note: Note,
+        textColor: Int,
+        progressView: TextView,
+        baseTextSize: Float,
+        onChanged: () -> Unit
+    ) {
+        container.removeAllViews()
+        val regularTasks = note.tasks.filter { !it.isGroupHeader }
+        val completedCount = regularTasks.count { it.done }
+        progressView.text = "پیشرفت: $completedCount از ${regularTasks.size}"
+        var taskNumber = 0
+
+        note.tasks.forEach { task ->
+            if (task.isGroupHeader) {
+                val children = note.tasks.filter { !it.isGroupHeader && it.groupId == task.id }
+                val allDone = children.isNotEmpty() && children.all { it.done }
+                val partiallyDone = children.any { it.done } && !allDone
+
+                val headerCheckBox = CheckBox(container.context).apply {
+                    text = if (partiallyDone) "◩  ◆ ${task.text}" else "◆ ${task.text}"
+                    isChecked = allDone
+                    textSize = baseTextSize + 1f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.parseColor(COLOR_GOLD))
+                    buttonTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
+                    setPadding(0, 12, 0, 8)
+                    setOnClickListener {
+                        val shouldComplete = !allDone
+                        children.forEach { it.done = shouldComplete }
+                        onChanged()
+                    }
+                }
+                container.addView(headerCheckBox)
+            } else {
+                taskNumber++
+                val taskCheckBox = CheckBox(container.context).apply {
+                    text = "$taskNumber. ${task.text}"
+                    isChecked = task.done
+                    textSize = baseTextSize
+                    setTextColor(textColor)
+                    buttonTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
+                    setPadding(if (task.groupId.isNotBlank()) 42 else 0, 8, 0, 8)
+                    setOnCheckedChangeListener { _, checked ->
+                        task.done = checked
+                        onChanged()
+                    }
+                }
+                container.addView(taskCheckBox)
+            }
+        }
+    }
+
     private fun persistCurrentNote(title: String, body: String, category: String, isPrivate: Boolean) {
         val existing = editingNoteId?.let { id -> notes.find { it.id == id } }
         val note = existing ?: Note(title = title, body = body, category = category)
@@ -1678,11 +1737,93 @@ private fun showSettingsDialog() {
         note.imagePaths.clear()
         note.imagePaths.addAll(currentDraftImagePaths)
 
-        val oldDoneByText = note.tasks.associate { it.text to it.done }
-        note.tasks.clear()
-        taskInput.text.toString().split("\n").map { it.trim() }.filter { it.isNotEmpty() }.forEach { text ->
-            note.tasks.add(Task(id = UUID.randomUUID().toString(), text = text, done = oldDoneByText[text] ?: false))
+        // بازسازی کارها بدون از دست دادن شناسه و وضعیت کارهای قبلی.
+        // خطی که با ◆ شروع شود، سرتیتر گروه است؛ حذف سرتیتر، فرزندان را مستقل می‌کند.
+        val oldTasks = note.tasks.toList()
+        val unusedOldTaskIds = oldTasks.map { it.id }.toMutableSet()
+        val oldHeadersByText = oldTasks.filter { it.isGroupHeader }
+            .groupBy { it.text }.mapValues { (_, values) -> values.toMutableList() }.toMutableMap()
+        val oldRegularTasksByText = oldTasks.filter { !it.isGroupHeader }
+            .groupBy { it.text }.mapValues { (_, values) -> values.toMutableList() }.toMutableMap()
+        val oldHeadersInOrder = oldTasks.filter { it.isGroupHeader }.toMutableList()
+        var headerFallbackIndex = 0
+        var activeGroupId = ""
+        val rebuiltTasks = mutableListOf<Task>()
+
+        taskInput.text.toString().split("\n").forEach { rawLine ->
+            val line = rawLine.trim()
+            if (line.isEmpty()) {
+                activeGroupId = ""
+                return@forEach
+            }
+
+            if (line.startsWith("◆")) {
+                val headerText = line.removePrefix("◆").trim()
+                if (headerText.isEmpty()) {
+                    activeGroupId = ""
+                    return@forEach
+                }
+
+                val sameTitleMatch = oldHeadersByText[headerText]
+                    ?.firstOrNull { it.id in unusedOldTaskIds }
+                val fallbackMatch = if (sameTitleMatch == null) {
+                    while (headerFallbackIndex < oldHeadersInOrder.size &&
+                        oldHeadersInOrder[headerFallbackIndex].id !in unusedOldTaskIds) {
+                        headerFallbackIndex++
+                    }
+                    oldHeadersInOrder.getOrNull(headerFallbackIndex++)?.takeIf {
+                        it.id in unusedOldTaskIds
+                    }
+                } else null
+                val oldHeader = sameTitleMatch ?: fallbackMatch
+                oldHeader?.let { unusedOldTaskIds.remove(it.id) }
+
+                val header = Task(
+                    id = oldHeader?.id ?: UUID.randomUUID().toString(),
+                    text = headerText,
+                    done = false,
+                    isGroupHeader = true,
+                    groupId = ""
+                )
+                rebuiltTasks.add(header)
+                activeGroupId = header.id
+            } else {
+                val oldTask = oldRegularTasksByText[line]
+                    ?.firstOrNull { it.id in unusedOldTaskIds }
+                oldTask?.let { unusedOldTaskIds.remove(it.id) }
+
+                rebuiltTasks.add(
+                    Task(
+                        id = oldTask?.id ?: UUID.randomUUID().toString(),
+                        text = line,
+                        done = oldTask?.done ?: false,
+                        isGroupHeader = false,
+                        groupId = activeGroupId
+                    )
+                )
+            }
         }
+
+        val remainingHeaderIds = rebuiltTasks.filter { it.isGroupHeader }.map { it.id }.toSet()
+        val oldTaskById = oldTasks.associateBy { it.id }
+        rebuiltTasks.filter { !it.isGroupHeader }.forEach { rebuiltTask ->
+            val oldTask = oldTaskById[rebuiltTask.id]
+            val oldGroupId = oldTask?.groupId.orEmpty()
+            val oldGroupWasRemoved = oldGroupId.isNotBlank() && oldGroupId !in remainingHeaderIds
+            val assignedGroupWasAnEarlierExistingHeader = if (rebuiltTask.groupId.isNotBlank()) {
+                val assignedHeaderIndex = oldTasks.indexOfFirst { it.id == rebuiltTask.groupId }
+                val removedHeaderIndex = oldTasks.indexOfFirst { it.id == oldGroupId }
+                assignedHeaderIndex >= 0 && removedHeaderIndex >= 0 &&
+                    assignedHeaderIndex < removedHeaderIndex
+            } else false
+
+            if (oldGroupWasRemoved && assignedGroupWasAnEarlierExistingHeader) {
+                rebuiltTask.groupId = ""
+            }
+        }
+
+        note.tasks.clear()
+        note.tasks.addAll(rebuiltTasks)
 
         note.reminderAt = selectedReminderAt; note.reminderEnabled = selectedReminderEnabled
         note.repeatMode = selectedRepeatMode; note.repeatCount = selectedRepeatCount
@@ -1709,13 +1850,33 @@ private fun showSettingsDialog() {
         micButton.text = "🎤 شروع ضبط صدا"
     }
 
+    private fun taskEditorText(note: Note): String {
+        val lines = mutableListOf<String>()
+        var previousWasGrouped = false
+
+        note.tasks.forEach { task ->
+            if (task.isGroupHeader) {
+                lines.add("◆ ${task.text}")
+                previousWasGrouped = true
+            } else {
+                val isGrouped = task.groupId.isNotBlank()
+                if (previousWasGrouped && !isGrouped) {
+                    lines.add("")
+                }
+                lines.add(task.text)
+                previousWasGrouped = isGrouped
+            }
+        }
+        return lines.joinToString("\n")
+    }
+
     private fun editNote(note: Note) {
         editingNoteId = note.id; titleInput.setText(note.title); bodyInput.setText(note.body)
         privateCheckBox.isChecked = note.isPrivate
         val formCategories = categoryOptions()
         val categoryIndex = formCategories.indexOf(if (note.category.isBlank()) noCategoryLabel else note.category)
         categorySpinner.setSelection(if (categoryIndex >= 0) categoryIndex else 0)
-        taskInput.setText(note.tasks.joinToString("\n") { it.text })
+        taskInput.setText(taskEditorText(note))
         
         // 🔧 بارگذاری عکس‌ها برای ویرایش
         currentDraftImagePaths.clear()
@@ -1867,7 +2028,17 @@ private fun showSettingsDialog() {
                     n.imagePaths.forEach { imgArray.put(it) }
                     put("imagePaths", imgArray)
 
-                    val ta = JSONArray(); n.tasks.forEach { ta.put(JSONObject().apply { put("id", it.id); put("text", it.text); put("done", it.done) }) }; put("tasks", ta)
+                    val ta = JSONArray()
+                    n.tasks.forEach { task ->
+                        ta.put(JSONObject().apply {
+                            put("id", task.id)
+                            put("text", task.text)
+                            put("done", task.done)
+                            put("isGroupHeader", task.isGroupHeader)
+                            put("groupId", task.groupId)
+                        })
+                    }
+                    put("tasks", ta)
                     put("reminderAt", n.reminderAt); put("reminderEnabled", n.reminderEnabled); put("repeatMode", n.repeatMode); put("repeatCount", n.repeatCount); put("repeatIntervalMinutes", n.repeatIntervalMinutes); put("ringtoneUri", n.ringtoneUri); put("reminderFiredCount", n.reminderFiredCount)
                 })
             }
@@ -1883,7 +2054,18 @@ private fun showSettingsDialog() {
             for (i in 0 until a.length()) {
                 val o = a.optJSONObject(i) ?: continue
                 val t = mutableListOf<Task>(); val ta = o.optJSONArray("tasks") ?: JSONArray()
-                for (j in 0 until ta.length()) { val to = ta.optJSONObject(j) ?: continue; t.add(Task(id = to.optString("id").ifBlank { UUID.randomUUID().toString() }, text = to.optString("text"), done = to.optBoolean("done", false))) }
+                for (j in 0 until ta.length()) {
+                    val to = ta.optJSONObject(j) ?: continue
+                    t.add(
+                        Task(
+                            id = to.optString("id").ifBlank { UUID.randomUUID().toString() },
+                            text = to.optString("text"),
+                            done = to.optBoolean("done", false),
+                            isGroupHeader = to.optBoolean("isGroupHeader", false),
+                            groupId = to.optString("groupId", "")
+                        )
+                    )
+                }
                 
                 // 🔧 خواندن لیست عکس‌ها
                 val imgPaths = mutableListOf<String>()
