@@ -433,7 +433,7 @@ class MainActivity : AppCompatActivity() {
         searchInput = EditText(this).apply {
             hint = "جستجو در یادداشت‌ها..."
             textSize = 14f
-            singleLine = true
+            isSingleLine = true
             setTextColor(Color.WHITE)
             setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
             background = null
