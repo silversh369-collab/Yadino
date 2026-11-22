@@ -190,7 +190,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var bodyInput: EditText
     private lateinit var categorySpinner: Spinner
     private lateinit var privateCheckBox: CheckBox
-    private lateinit var taskInput: EditText
+    // محرر دیداری کارها؛ کاربر دیگر نیازی به تایپ علامت سربرگ ندارد.
+    private lateinit var taskInput: EditText // نگه‌داری برای سازگاری با ورودی صوتی قدیمی
+    private lateinit var taskDraftContainer: LinearLayout
+    private val taskDraftTasks = mutableListOf<Task>()
+    private val collapsedTaskGroupIds = mutableSetOf<String>()
     private lateinit var notesRecyclerView: RecyclerView
     private lateinit var noteAdapter: NoteAdapter
     private lateinit var filterSpinner: Spinner
@@ -469,14 +473,14 @@ class MainActivity : AppCompatActivity() {
         }
         formContainer.addView(privateCheckBox)
 
+        // فیلد قدیمی فقط برای حفظ سازگاری داخلی باقی می‌ماند و دیگر به کاربر نمایش داده نمی‌شود.
         taskInput = EditText(this).apply {
-            hint = "هر خط یک کار؛ برای ساخت سرتیتر، ابتدای خط ◆ بگذار\nمثال: ◆ کارهای روزانه"
-            minLines = 3
+            hint = "افزودن چند کار مستقل؛ هر کار را در یک خط بنویس"
+            minLines = 2
             gravity = Gravity.TOP or Gravity.RIGHT
         }
         styleInput(taskInput)
         taskInput.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) speechTarget = taskInput }
-        formContainer.addView(taskInput, matchWidth())
 
         fun createGoldButton(text: String, onClick: () -> Unit): Button {
             return Button(this).apply {
@@ -501,6 +505,38 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+
+        formContainer.addView(TextView(this).apply {
+            text = "مدیریت کارهای یادداشت"
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor(COLOR_GOLD))
+            setPadding(0, 24, 0, 12)
+        }, matchWidth())
+
+        val taskActionsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+        taskActionsRow.addView(
+            createGoldButton("＋ افزودن کار") { showTaskDraftDialog() },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 8 }
+        )
+        taskActionsRow.addView(
+            createGoldButton("＋ ساخت گروه") { showTaskGroupDialog() },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        formContainer.addView(taskActionsRow, matchWidth())
+
+        // ورودی متنی قدیمی فقط در حافظه باقی می‌ماند؛ مدیریت کارها کاملاً دیداری است.
+        // کاربر برای ساخت گروه یا افزودن کار نیازی به تایپ علامت ویژه یا متن چندخطی ندارد.
+        taskDraftContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(0, 8, 0, 12)
+        }
+        formContainer.addView(taskDraftContainer, matchWidth())
+        refreshTaskDraftEditor()
 
         micButton = createGoldButton("🎤 شروع ضبط صدا") { toggleVoiceInput(false) }
         formContainer.addView(micButton, matchWidth())
@@ -1695,7 +1731,7 @@ private fun showSettingsDialog() {
                 val partiallyDone = children.any { it.done } && !allDone
 
                 val headerCheckBox = CheckBox(container.context).apply {
-                    text = if (partiallyDone) "◩  ◆ ${task.text}" else "◆ ${task.text}"
+                    text = if (partiallyDone) "نیمه‌انجام · ${task.text}" else task.text
                     isChecked = allDone
                     textSize = baseTextSize + 1f
                     typeface = Typeface.DEFAULT_BOLD
@@ -1737,93 +1773,17 @@ private fun showSettingsDialog() {
         note.imagePaths.clear()
         note.imagePaths.addAll(currentDraftImagePaths)
 
-        // بازسازی کارها بدون از دست دادن شناسه و وضعیت کارهای قبلی.
-        // خطی که با ◆ شروع شود، سرتیتر گروه است؛ حذف سرتیتر، فرزندان را مستقل می‌کند.
-        val oldTasks = note.tasks.toList()
-        val unusedOldTaskIds = oldTasks.map { it.id }.toMutableSet()
-        val oldHeadersByText = oldTasks.filter { it.isGroupHeader }
-            .groupBy { it.text }.mapValues { (_, values) -> values.toMutableList() }.toMutableMap()
-        val oldRegularTasksByText = oldTasks.filter { !it.isGroupHeader }
-            .groupBy { it.text }.mapValues { (_, values) -> values.toMutableList() }.toMutableMap()
-        val oldHeadersInOrder = oldTasks.filter { it.isGroupHeader }.toMutableList()
-        var headerFallbackIndex = 0
-        var activeGroupId = ""
-        val rebuiltTasks = mutableListOf<Task>()
-
-        taskInput.text.toString().split("\n").forEach { rawLine ->
-            val line = rawLine.trim()
-            if (line.isEmpty()) {
-                activeGroupId = ""
-                return@forEach
-            }
-
-            if (line.startsWith("◆")) {
-                val headerText = line.removePrefix("◆").trim()
-                if (headerText.isEmpty()) {
-                    activeGroupId = ""
-                    return@forEach
-                }
-
-                val sameTitleMatch = oldHeadersByText[headerText]
-                    ?.firstOrNull { it.id in unusedOldTaskIds }
-                val fallbackMatch = if (sameTitleMatch == null) {
-                    while (headerFallbackIndex < oldHeadersInOrder.size &&
-                        oldHeadersInOrder[headerFallbackIndex].id !in unusedOldTaskIds) {
-                        headerFallbackIndex++
-                    }
-                    oldHeadersInOrder.getOrNull(headerFallbackIndex++)?.takeIf {
-                        it.id in unusedOldTaskIds
-                    }
-                } else null
-                val oldHeader = sameTitleMatch ?: fallbackMatch
-                oldHeader?.let { unusedOldTaskIds.remove(it.id) }
-
-                val header = Task(
-                    id = oldHeader?.id ?: UUID.randomUUID().toString(),
-                    text = headerText,
-                    done = false,
-                    isGroupHeader = true,
-                    groupId = ""
-                )
-                rebuiltTasks.add(header)
-                activeGroupId = header.id
-            } else {
-                val oldTask = oldRegularTasksByText[line]
-                    ?.firstOrNull { it.id in unusedOldTaskIds }
-                oldTask?.let { unusedOldTaskIds.remove(it.id) }
-
-                rebuiltTasks.add(
-                    Task(
-                        id = oldTask?.id ?: UUID.randomUUID().toString(),
-                        text = line,
-                        done = oldTask?.done ?: false,
-                        isGroupHeader = false,
-                        groupId = activeGroupId
-                    )
-                )
-            }
-        }
-
-        val remainingHeaderIds = rebuiltTasks.filter { it.isGroupHeader }.map { it.id }.toSet()
-        val oldTaskById = oldTasks.associateBy { it.id }
-        rebuiltTasks.filter { !it.isGroupHeader }.forEach { rebuiltTask ->
-            val oldTask = oldTaskById[rebuiltTask.id]
-            val oldGroupId = oldTask?.groupId.orEmpty()
-            val oldGroupWasRemoved = oldGroupId.isNotBlank() && oldGroupId !in remainingHeaderIds
-            val assignedGroupWasAnEarlierExistingHeader = if (rebuiltTask.groupId.isNotBlank()) {
-                val assignedHeaderIndex = oldTasks.indexOfFirst { it.id == rebuiltTask.groupId }
-                val removedHeaderIndex = oldTasks.indexOfFirst { it.id == oldGroupId }
-                assignedHeaderIndex >= 0 && removedHeaderIndex >= 0 &&
-                    assignedHeaderIndex < removedHeaderIndex
-            } else false
-
-            if (oldGroupWasRemoved && assignedGroupWasAnEarlierExistingHeader) {
-                rebuiltTask.groupId = ""
-            }
-        }
-
+        // کارها از ویرایشگر دیداری می‌آیند. شناسه، وضعیت انجام و ارتباط گروهی حفظ می‌شوند.
+        val validGroupIds = taskDraftTasks.filter { it.isGroupHeader }.map { it.id }.toSet()
         note.tasks.clear()
-        note.tasks.addAll(rebuiltTasks)
+        taskDraftTasks.forEach { draftTask ->
+            val copiedTask = draftTask.copy()
+            if (!copiedTask.isGroupHeader && copiedTask.groupId !in validGroupIds) {
+                copiedTask.groupId = ""
+            }
+            if (copiedTask.isGroupHeader) copiedTask.groupId = ""
+            note.tasks.add(copiedTask)
+        }
 
         note.reminderAt = selectedReminderAt; note.reminderEnabled = selectedReminderEnabled
         note.repeatMode = selectedRepeatMode; note.repeatCount = selectedRepeatCount
@@ -1840,6 +1800,9 @@ private fun showSettingsDialog() {
 
     private fun clearForm() {
         titleInput.text.clear(); bodyInput.text.clear(); taskInput.text.clear()
+        taskDraftTasks.clear()
+        collapsedTaskGroupIds.clear()
+        refreshTaskDraftEditor()
         categorySpinner.setSelection(0); privateCheckBox.isChecked = false; editingNoteId = null
         selectedReminderAt = 0L; selectedReminderEnabled = false; selectedRepeatMode = "none"
         selectedRepeatCount = 0; selectedRepeatInterval = 60; selectedRingtoneUri = ""
@@ -1848,6 +1811,291 @@ private fun showSettingsDialog() {
         reminderSummary.text = REMINDER_NONE_TEXT
         micStatusText.visibility = View.GONE
         micButton.text = "🎤 شروع ضبط صدا"
+    }
+
+    private fun showTaskGroupDialog() {
+        showCustomInputDialog(
+            title = "ساخت گروه جدید",
+            hint = "نام گروه را وارد کن",
+            initialText = "",
+            inputType = InputType.TYPE_CLASS_TEXT
+        ) { entered ->
+            val groupName = entered.trim()
+            if (groupName.isBlank()) {
+                Toast.makeText(this, "نام گروه نمی‌تواند خالی باشد", Toast.LENGTH_SHORT).show()
+                return@showCustomInputDialog
+            }
+            taskDraftTasks.add(
+                Task(
+                    text = groupName,
+                    isGroupHeader = true,
+                    groupId = ""
+                )
+            )
+            refreshTaskDraftEditor()
+        }
+    }
+
+    private fun showTaskDraftDialog(existingTask: Task? = null) {
+        showCustomInputDialog(
+            title = if (existingTask == null) "افزودن کار جدید" else "ویرایش کار",
+            hint = "عنوان کار را وارد کن",
+            initialText = existingTask?.text.orEmpty(),
+            inputType = InputType.TYPE_CLASS_TEXT
+        ) { entered ->
+            val taskText = entered.trim()
+            if (taskText.isBlank()) {
+                Toast.makeText(this, "متن کار نمی‌تواند خالی باشد", Toast.LENGTH_SHORT).show()
+                return@showCustomInputDialog
+            }
+
+            if (existingTask != null) {
+                existingTask.text = taskText
+                refreshTaskDraftEditor()
+            } else {
+                val groups = taskDraftTasks.filter { it.isGroupHeader }
+                if (groups.isEmpty()) {
+                    taskDraftTasks.add(Task(text = taskText))
+                    refreshTaskDraftEditor()
+                } else {
+                    val options = arrayOf("کار مستقل") + groups.map { it.text }
+                    showCustomListDialog("این کار کجا قرار بگیرد؟", options) { selected ->
+                        val groupId = if (selected == 0) "" else groups[selected - 1].id
+                        taskDraftTasks.add(Task(text = taskText, groupId = groupId))
+                        refreshTaskDraftEditor()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun showTaskDraftOptions(task: Task) {
+        val options = if (task.isGroupHeader) {
+            arrayOf("تغییر نام گروه", "حذف گروه و مستقل‌کردن کارها")
+        } else {
+            arrayOf("ویرایش کار", "انتقال کار", "حذف کار")
+        }
+        showCustomListDialog("مدیریت مورد", options) { selected ->
+            if (task.isGroupHeader) {
+                when (selected) {
+                    0 -> showCustomInputDialog("تغییر نام گروه", "نام جدید گروه", task.text, InputType.TYPE_CLASS_TEXT) { value ->
+                        val name = value.trim()
+                        if (name.isNotBlank()) {
+                            task.text = name
+                            refreshTaskDraftEditor()
+                        }
+                    }
+                    1 -> showCustomConfirmDialog(
+                        "حذف گروه",
+                        "گروه حذف می‌شود، اما کارهای داخل آن به بخش کارهای مستقل منتقل می‌شوند. ادامه می‌دهی؟"
+                    ) {
+                        taskDraftTasks.filter { !it.isGroupHeader && it.groupId == task.id }
+                            .forEach { it.groupId = "" }
+                        taskDraftTasks.removeAll { it.id == task.id }
+                        collapsedTaskGroupIds.remove(task.id)
+                        refreshTaskDraftEditor()
+                    }
+                }
+            } else {
+                when (selected) {
+                    0 -> showTaskDraftDialog(task)
+                    1 -> moveDraftTask(task)
+                    2 -> showCustomConfirmDialog("حذف کار", "این کار حذف شود؟") {
+                        taskDraftTasks.removeAll { it.id == task.id }
+                        refreshTaskDraftEditor()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun moveDraftTask(task: Task) {
+        val groups = taskDraftTasks.filter { it.isGroupHeader }
+        val options = arrayOf("کار مستقل") + groups.map { it.text }
+        showCustomListDialog("انتقال کار به", options) { selected ->
+            task.groupId = if (selected == 0) "" else groups[selected - 1].id
+            refreshTaskDraftEditor()
+        }
+    }
+
+    private fun refreshTaskDraftEditor() {
+        if (!::taskDraftContainer.isInitialized) return
+        taskDraftContainer.removeAllViews()
+
+        val groupedTasks = taskDraftTasks.filter { it.isGroupHeader }
+        val independentTasks = taskDraftTasks.filter { !it.isGroupHeader && it.groupId.isBlank() }
+        val totalTasks = taskDraftTasks.count { !it.isGroupHeader }
+        val completedTasks = taskDraftTasks.count { !it.isGroupHeader && it.done }
+
+        taskDraftContainer.addView(TextView(this).apply {
+            text = "پیشرفت: $completedTasks از $totalTasks"
+            textSize = 13f
+            setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+            setPadding(4, 8, 4, 12)
+        })
+
+        groupedTasks.forEach { group ->
+            val children = taskDraftTasks.filter { !it.isGroupHeader && it.groupId == group.id }
+            val doneCount = children.count { it.done }
+            val allDone = children.isNotEmpty() && doneCount == children.size
+            val partial = doneCount > 0 && !allDone
+            val collapsed = group.id in collapsedTaskGroupIds
+
+            val groupCard = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+                setPadding(12, 8, 12, 8)
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#202020"))
+                    cornerRadius = 22f
+                    setStroke(1, Color.parseColor(COLOR_GOLD_DARK))
+                }
+            }
+            val headerRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+            }
+            val groupCheck = CheckBox(this).apply {
+                text = (if (partial) "نیمه‌انجام · " else "") + group.text
+                isChecked = allDone
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.parseColor(COLOR_GOLD))
+                buttonTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                setOnClickListener {
+                    val makeDone = !allDone
+                    children.forEach { it.done = makeDone }
+                    refreshTaskDraftEditor()
+                }
+            }
+            headerRow.addView(groupCheck)
+            headerRow.addView(Button(this).apply {
+                text = if (collapsed) "▾" else "▴"
+                textSize = 16f
+                setTextColor(Color.parseColor(COLOR_GOLD))
+                background = null
+                setOnClickListener {
+                    if (collapsed) collapsedTaskGroupIds.remove(group.id)
+                    else collapsedTaskGroupIds.add(group.id)
+                    refreshTaskDraftEditor()
+                }
+            })
+            headerRow.addView(Button(this).apply {
+                text = "⋮"
+                textSize = 20f
+                setTextColor(Color.parseColor(COLOR_GOLD))
+                background = null
+                setOnClickListener { showTaskDraftOptions(group) }
+            })
+            groupCard.addView(headerRow)
+            groupCard.addView(TextView(this).apply {
+                text = "$doneCount از ${children.size} کار انجام شده"
+                textSize = 11f
+                setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+                setPadding(8, 0, 8, 4)
+            })
+
+            if (!collapsed) {
+                children.forEach { child ->
+                    val childRow = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        layoutDirection = View.LAYOUT_DIRECTION_RTL
+                        setPadding(20, 0, 0, 0)
+                    }
+                    childRow.addView(CheckBox(this).apply {
+                        text = child.text
+                        isChecked = child.done
+                        textSize = 14f
+                        setTextColor(Color.WHITE)
+                        buttonTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
+                        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                        setOnCheckedChangeListener { _, checked ->
+                            child.done = checked
+                            refreshTaskDraftEditor()
+                        }
+                    })
+                    childRow.addView(Button(this).apply {
+                        text = "⋮"
+                        setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+                        background = null
+                        setOnClickListener { showTaskDraftOptions(child) }
+                    })
+                    groupCard.addView(childRow)
+                }
+                groupCard.addView(createEditorSmallAction("＋ افزودن کار به این گروه") {
+                    showCustomInputDialog("افزودن کار به ${group.text}", "عنوان کار", "", InputType.TYPE_CLASS_TEXT) { value ->
+                        val taskText = value.trim()
+                        if (taskText.isNotBlank()) {
+                            taskDraftTasks.add(Task(text = taskText, groupId = group.id))
+                            refreshTaskDraftEditor()
+                        }
+                    }
+                })
+            }
+            val cardParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            cardParams.bottomMargin = 12
+            taskDraftContainer.addView(groupCard, cardParams)
+        }
+
+        if (independentTasks.isNotEmpty()) {
+            taskDraftContainer.addView(TextView(this).apply {
+                text = "کارهای مستقل"
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setPadding(4, 12, 4, 6)
+            })
+            independentTasks.forEach { task ->
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    layoutDirection = View.LAYOUT_DIRECTION_RTL
+                }
+                row.addView(CheckBox(this).apply {
+                    text = task.text
+                    isChecked = task.done
+                    textSize = 14f
+                    setTextColor(Color.WHITE)
+                    buttonTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    setOnCheckedChangeListener { _, checked ->
+                        task.done = checked
+                        refreshTaskDraftEditor()
+                    }
+                })
+                row.addView(Button(this).apply {
+                    text = "⋮"
+                    setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+                    background = null
+                    setOnClickListener { showTaskDraftOptions(task) }
+                })
+                taskDraftContainer.addView(row)
+            }
+        }
+
+        if (taskDraftTasks.isEmpty()) {
+            taskDraftContainer.addView(TextView(this).apply {
+                text = "هنوز کاری اضافه نکرده‌ای. از دکمه‌های بالا استفاده کن."
+                textSize = 13f
+                setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+                gravity = Gravity.CENTER
+                setPadding(12, 18, 12, 18)
+            })
+        }
+    }
+
+    private fun createEditorSmallAction(label: String, action: () -> Unit): TextView {
+        return TextView(this).apply {
+            text = label
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor(COLOR_GOLD))
+            setPadding(12, 12, 12, 12)
+            setOnClickListener { action() }
+        }
     }
 
     private fun taskEditorText(note: Note): String {
@@ -1876,7 +2124,13 @@ private fun showSettingsDialog() {
         val formCategories = categoryOptions()
         val categoryIndex = formCategories.indexOf(if (note.category.isBlank()) noCategoryLabel else note.category)
         categorySpinner.setSelection(if (categoryIndex >= 0) categoryIndex else 0)
-        taskInput.setText(taskEditorText(note))
+        taskDraftTasks.clear()
+        taskDraftTasks.addAll(note.tasks.map { it.copy() })
+        val existingGroupIds = taskDraftTasks.filter { it.isGroupHeader }.map { it.id }.toSet()
+        taskDraftTasks.filter { !it.isGroupHeader && it.groupId !in existingGroupIds }
+            .forEach { it.groupId = "" }
+        collapsedTaskGroupIds.clear()
+        refreshTaskDraftEditor()
         
         // 🔧 بارگذاری عکس‌ها برای ویرایش
         currentDraftImagePaths.clear()
