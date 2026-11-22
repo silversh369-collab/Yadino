@@ -198,6 +198,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var notesRecyclerView: RecyclerView
     private lateinit var noteAdapter: NoteAdapter
     private lateinit var filterSpinner: Spinner
+    private lateinit var searchInput: EditText
     private lateinit var reminderSummary: TextView
     private lateinit var formContainer: LinearLayout
     private lateinit var mainScroll: ScrollView
@@ -368,7 +369,7 @@ class MainActivity : AppCompatActivity() {
         mainScroll = ScrollView(this)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(40, 60, 40, 450)
+            setPadding(24, 28, 24, 190)
         }
 
         val headerRow = LinearLayout(this).apply {
@@ -409,7 +410,105 @@ class MainActivity : AppCompatActivity() {
         headerRow.addView(settingsBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         
         content.addView(headerRow)
-        content.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, 30) })
+        content.addView(TextView(this).apply {
+            text = "همیشه منظم، همیشه همراه با برنامه"
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor("#D9B85B"))
+            setPadding(0, 0, 0, 18)
+        })
+
+        val searchPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(18, 5, 18, 5)
+            background = yadinoPanelBackground(30f)
+        }
+        searchPanel.addView(TextView(this).apply {
+            text = "⌕"
+            textSize = 30f
+            setTextColor(Color.parseColor(COLOR_GOLD))
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(42, 54))
+        searchInput = EditText(this).apply {
+            hint = "جستجو در یادداشت‌ها..."
+            textSize = 14f
+            singleLine = true
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+            background = null
+            gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { renderNotes() }
+                override fun afterTextChanged(s: android.text.Editable?) = Unit
+            })
+        }
+        searchPanel.addView(searchInput, LinearLayout.LayoutParams(0, 54, 1f))
+        searchPanel.addView(TextView(this).apply {
+            text = "⚲"
+            textSize = 23f
+            setTextColor(Color.parseColor(COLOR_GOLD))
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(42, 54))
+        content.addView(searchPanel, matchWidth())
+
+        val shortcutGrid = GridLayout(this).apply {
+            columnCount = 2
+            rowCount = 2
+            useDefaultMargins = false
+        }
+        fun addShortcut(icon: String, label: String, subtitle: String, action: () -> Unit) {
+            val tile = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(12, 16, 12, 16)
+                background = yadinoPanelBackground(26f)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { action() }
+            }
+            tile.addView(TextView(this).apply {
+                text = icon
+                textSize = 27f
+                gravity = Gravity.CENTER
+                setTextColor(Color.parseColor(COLOR_GOLD))
+            })
+            tile.addView(TextView(this).apply {
+                text = label
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(Color.parseColor("#F5D77E"))
+            })
+            tile.addView(TextView(this).apply {
+                text = subtitle
+                textSize = 11f
+                gravity = Gravity.CENTER
+                setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+            })
+            val params = GridLayout.LayoutParams().apply {
+                width = 0
+                height = ViewGroup.LayoutParams.WRAP_CONTENT
+                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                setMargins(5, 5, 5, 5)
+            }
+            shortcutGrid.addView(tile, params)
+        }
+        addShortcut("▦", "کارهای امروز", "مرور برنامه‌ها") {
+            filterSpinner.setSelection(0)
+            Toast.makeText(this, "یادداشت‌های دارای کار در فهرست نمایش داده می‌شوند.", Toast.LENGTH_SHORT).show()
+        }
+        addShortcut("★", "علاقه‌مندی‌ها", "یادداشت‌های منتخب") {
+            Toast.makeText(this, "بخش علاقه‌مندی‌ها در مرحله بعد به مدل یادداشت اضافه می‌شود.", Toast.LENGTH_SHORT).show()
+        }
+        addShortcut("↗", "برنامه‌ریزی", "مدیریت کارها") { showForm() }
+        addShortcut("☼", "ایده‌ها", "یادداشت‌های خلاقانه") {
+            val ideaIndex = filterOptions().indexOf("ایده‌ها")
+            if (ideaIndex >= 0) filterSpinner.setSelection(ideaIndex)
+            else Toast.makeText(this, "ابتدا دسته «ایده‌ها» را از تنظیمات بساز.", Toast.LENGTH_SHORT).show()
+        }
+        content.addView(shortcutGrid, matchWidth())
 
         formContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -600,6 +699,14 @@ class MainActivity : AppCompatActivity() {
 
         content.addView(formContainer)
 
+        content.addView(TextView(this).apply {
+            text = "یادداشت‌های اخیر"
+            textSize = 21f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor("#F1C75B"))
+            setPadding(0, 22, 0, 12)
+        })
         filterSpinner = Spinner(this)
         filterSpinner.adapter = spinnerAdapter(filterOptions())
         filterSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -609,7 +716,7 @@ class MainActivity : AppCompatActivity() {
         content.addView(filterSpinner, matchWidth())
 
         notesRecyclerView = RecyclerView(this).apply {
-            layoutManager = GridLayoutManager(this@MainActivity, 2)
+            layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this@MainActivity)
             setHasFixedSize(false)
             isNestedScrollingEnabled = false
         }
@@ -645,6 +752,46 @@ class MainActivity : AppCompatActivity() {
             setMargins(50, 50, 50, 100) 
         }
         root.addView(fab, fabParams)
+
+        val bottomBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            background = yadinoPanelBackground(34f)
+            setPadding(8, 8, 8, 8)
+            elevation = 24f
+        }
+        fun addBottomItem(icon: String, label: String, action: () -> Unit) {
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(6, 8, 6, 8)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { action() }
+            }
+            item.addView(TextView(this).apply {
+                text = icon
+                textSize = 22f
+                gravity = Gravity.CENTER
+                setTextColor(Color.parseColor(COLOR_GOLD))
+            })
+            item.addView(TextView(this).apply {
+                text = label
+                textSize = 10f
+                gravity = Gravity.CENTER
+                setTextColor(Color.parseColor("#E9D18A"))
+            })
+            bottomBar.addView(item, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        addBottomItem("▤", "یادداشت‌ها") { mainScroll.smoothScrollTo(0, 0) }
+        addBottomItem("★", "ویژگی‌ها") { showSettingsDialog() }
+        addBottomItem("⚙", "تنظیمات") { showSettingsDialog() }
+        addBottomItem("•••", "بیشتر") { showCustomListDialog("بیشتر", arrayOf("مدیریت دسته‌ها", "تنظیمات")) { showSettingsDialog() } }
+        root.addView(bottomBar, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM
+        ).apply { setMargins(20, 0, 20, 18) })
 
         setContentView(root)
     }
@@ -744,10 +891,32 @@ private fun showSettingsDialog() {
         mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) } 
     }
 
+    private fun yadinoPanelBackground(radius: Float = 28f): android.graphics.drawable.Drawable {
+        val outer = GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(Color.parseColor("#F7D979"), Color.parseColor("#7D5410"), Color.parseColor("#E9BD4D"))
+        ).apply {
+            cornerRadius = radius
+            setStroke(1, Color.parseColor("#E8C45F"))
+        }
+        val inner = GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(Color.parseColor("#252018"), Color.parseColor("#090909"), Color.parseColor("#17130C"))
+        ).apply { cornerRadius = radius - 3f }
+        return LayerDrawable(arrayOf(outer, inner)).apply {
+            setLayerInset(1, 3, 3, 3, 3)
+        }
+    }
+
     private fun renderNotes() {
         val selectedCategory = if (::filterSpinner.isInitialized) filterSpinner.selectedItem?.toString() ?: allCategoriesLabel else allCategoriesLabel
+        val query = if (::searchInput.isInitialized) searchInput.text?.toString()?.trim().orEmpty() else ""
         val visibleNotes = notes.filter { note ->
-            when (selectedCategory) {
+            val matchesSearch = query.isBlank() ||
+                note.title.contains(query, ignoreCase = true) ||
+                note.body.contains(query, ignoreCase = true) ||
+                note.category.contains(query, ignoreCase = true)
+            matchesSearch && when (selectedCategory) {
                 allCategoriesLabel -> true
                 noCategoryLabel -> note.category.isBlank() || note.category !in categories
                 else -> note.category == selectedCategory
@@ -1015,13 +1184,16 @@ private fun showSettingsDialog() {
                     RecyclerView.LayoutParams.MATCH_PARENT,
                     RecyclerView.LayoutParams.WRAP_CONTENT
                 ).apply {
-                    marginEnd = 20
-                    bottomMargin = 30
+                    marginStart = 4
+                    marginEnd = 4
+                    topMargin = 6
+                    bottomMargin = 14
                 }
-                radius = 40f
-                cardElevation = 20f
-                strokeWidth = 1
-                strokeColor = Color.parseColor("#44D4AF37")
+                radius = 28f
+                cardElevation = 12f
+                strokeWidth = 2
+                strokeColor = Color.parseColor("#99D4AF37")
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
                 setCardBackgroundColor(Color.parseColor(COLOR_CARD))
                 rippleColor = ColorStateList.valueOf(Color.parseColor("#33D4AF37"))
                 isClickable = true
@@ -1029,19 +1201,30 @@ private fun showSettingsDialog() {
                 
                 val innerLayout = LinearLayout(parent.context).apply {
                     orientation = LinearLayout.VERTICAL
-                    setPadding(40, 40, 40, 40)
+                    layoutDirection = View.LAYOUT_DIRECTION_RTL
+                    setPadding(20, 20, 20, 20)
                 }
                 addView(innerLayout)
             }
             
             val innerLayout = card.getChildAt(0) as LinearLayout
-            val title = TextView(parent.context).apply { textSize = 20f; typeface = Typeface.DEFAULT_BOLD }
+            val title = TextView(parent.context).apply {
+                textSize = 17f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.RIGHT
+                setTextColor(Color.parseColor("#F1C75B"))
+            }
             val noteImageContainer = FrameLayout(parent.context).apply {
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 visibility = View.GONE
                 setPadding(0, 10, 0, 10)
             }
-            val bodyText = TextView(parent.context).apply { textSize = 14f; maxLines = 3; setPadding(0, 10, 0, 10) }
+            val bodyText = TextView(parent.context).apply {
+                textSize = 13f
+                maxLines = 3
+                gravity = Gravity.RIGHT
+                setPadding(0, 8, 0, 8)
+            }
             val category = TextView(parent.context).apply { textSize = 13f; setPadding(0, 5, 0, 5) }
             val hint = TextView(parent.context).apply { textSize = 11f; setPadding(0, 5, 0, 0) }
             val progressText = TextView(parent.context).apply { textSize = 12f; setTextColor(Color.parseColor(COLOR_GOLD)); setPadding(0, 5, 0, 5) }
@@ -1070,7 +1253,7 @@ private fun showSettingsDialog() {
                 holder.card.setCardBackgroundColor(Color.parseColor(COLOR_CARD))
             }
 
-            holder.title.setTextColor(textColor)
+            holder.title.setTextColor(Color.parseColor("#F1C75B"))
             holder.title.text = if (note.isPrivate) "🔒 ${note.title}" else note.title
 
             holder.category.setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
