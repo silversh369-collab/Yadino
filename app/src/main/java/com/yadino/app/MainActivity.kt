@@ -355,6 +355,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
     private fun buildScreen() {
         val rootBg = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
@@ -369,7 +371,7 @@ class MainActivity : AppCompatActivity() {
         mainScroll = ScrollView(this)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 28, 24, 190)
+            setPadding(dp(16), dp(20), dp(16), dp(170))
         }
 
         val headerRow = LinearLayout(this).apply {
@@ -380,7 +382,7 @@ class MainActivity : AppCompatActivity() {
 
         val titleTv = TextView(this).apply {
             text = "یادینو"
-            textSize = 48f
+            textSize = 38f
             gravity = Gravity.CENTER
             typeface = Typeface.create("sans-serif-black", Typeface.BOLD)
             letterSpacing = 0.05f
@@ -398,8 +400,13 @@ class MainActivity : AppCompatActivity() {
             titleTv.invalidate()
         }
         
-        headerRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        headerRow.addView(titleTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val brandLogo = ImageView(this).apply {
+            setImageResource(R.drawable.yadino_logo)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            contentDescription = "لوگوی یادینو"
+        }
+        headerRow.addView(brandLogo, LinearLayout.LayoutParams(dp(58), dp(64)))
+        headerRow.addView(titleTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f))
         
         val settingsBtn = TextView(this).apply {
             text = "⚙️"
@@ -729,27 +736,43 @@ class MainActivity : AppCompatActivity() {
         notesRecyclerView.adapter = noteAdapter
         content.addView(notesRecyclerView, matchWidth())
 
+        // منظره کوهستان در لایه پشتی است؛ محتوای برنامه همچنان واقعی و تعاملی می‌ماند.
+        val landscape = ImageView(this).apply {
+            setImageResource(R.drawable.yadino_landscape)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            alpha = 0.92f
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        root.addView(landscape, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(190), Gravity.BOTTOM
+        ))
+
+        mainScroll.clipToPadding = false
+        mainScroll.isFillViewport = false
         mainScroll.addView(content)
-        root.addView(mainScroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        root.addView(mainScroll, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
 
         fab = FloatingActionButton(this).apply {
             setImageResource(android.R.drawable.ic_input_add)
-            imageTintList = ColorStateList.valueOf(Color.parseColor(COLOR_BG_BOTTOM)) 
-            backgroundTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
-            compatElevation = 25f
-            
+            imageTintList = ColorStateList.valueOf(Color.parseColor("#17120A"))
+            backgroundTintList = ColorStateList.valueOf(Color.parseColor("#E8B936"))
+            compatElevation = dp(10).toFloat()
+            size = FloatingActionButton.SIZE_NORMAL
+            contentDescription = "افزودن یادداشت"
             setOnClickListener { view ->
-                view.animate().rotation(90f).setDuration(200).withEndAction {
+                view.animate().rotation(90f).setDuration(160).withEndAction {
                     formContainer.visibility = View.VISIBLE
                     fab.hide()
-                    mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) }
-                    view.animate().rotation(0f).setDuration(0).start()
+                    mainScroll.post { mainScroll.smoothScrollTo(0, 0) }
+                    view.rotation = 0f
                 }.start()
             }
         }
-        val fabParams = FrameLayout.LayoutParams(170, 170).apply { 
-            gravity = Gravity.BOTTOM or Gravity.START
-            setMargins(50, 50, 50, 100) 
+        val fabParams = FrameLayout.LayoutParams(dp(58), dp(58)).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            setMargins(dp(20), dp(20), dp(22), dp(94))
         }
         root.addView(fab, fabParams)
 
@@ -757,28 +780,28 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             layoutDirection = View.LAYOUT_DIRECTION_RTL
-            background = yadinoPanelBackground(34f)
-            setPadding(8, 8, 8, 8)
-            elevation = 24f
+            background = yadinoPanelBackground(30f)
+            setPadding(dp(6), dp(5), dp(6), dp(5))
+            elevation = dp(12).toFloat()
         }
         fun addBottomItem(icon: String, label: String, action: () -> Unit) {
             val item = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
-                setPadding(6, 8, 6, 8)
+                setPadding(dp(5), dp(5), dp(5), dp(5))
                 isClickable = true
                 isFocusable = true
                 setOnClickListener { action() }
             }
             item.addView(TextView(this).apply {
                 text = icon
-                textSize = 22f
+                textSize = 20f
                 gravity = Gravity.CENTER
                 setTextColor(Color.parseColor(COLOR_GOLD))
             })
             item.addView(TextView(this).apply {
                 text = label
-                textSize = 10f
+                textSize = 9f
                 gravity = Gravity.CENTER
                 setTextColor(Color.parseColor("#E9D18A"))
             })
@@ -789,9 +812,9 @@ class MainActivity : AppCompatActivity() {
         addBottomItem("⚙", "تنظیمات") { showSettingsDialog() }
         addBottomItem("•••", "بیشتر") { showCustomListDialog("بیشتر", arrayOf("مدیریت دسته‌ها", "تنظیمات")) { showSettingsDialog() } }
         root.addView(bottomBar, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(72),
             Gravity.BOTTOM
-        ).apply { setMargins(20, 0, 20, 18) })
+        ).apply { setMargins(dp(14), 0, dp(14), dp(12)) })
 
         setContentView(root)
     }
