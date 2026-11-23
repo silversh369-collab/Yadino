@@ -371,7 +371,7 @@ class MainActivity : AppCompatActivity() {
         mainScroll = ScrollView(this)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(20), dp(16), dp(170))
+            setPadding(dp(14), dp(10), dp(14), dp(176))
         }
 
         val headerRow = LinearLayout(this).apply {
@@ -382,7 +382,7 @@ class MainActivity : AppCompatActivity() {
 
         val titleTv = TextView(this).apply {
             text = "یادینو"
-            textSize = 38f
+            textSize = 36f
             gravity = Gravity.CENTER
             typeface = Typeface.create("sans-serif-black", Typeface.BOLD)
             letterSpacing = 0.05f
@@ -405,7 +405,7 @@ class MainActivity : AppCompatActivity() {
             scaleType = ImageView.ScaleType.FIT_CENTER
             contentDescription = "لوگوی یادینو"
         }
-        headerRow.addView(brandLogo, LinearLayout.LayoutParams(dp(58), dp(64)))
+        headerRow.addView(brandLogo, LinearLayout.LayoutParams(dp(62), dp(72)))
         headerRow.addView(titleTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f))
         
         val settingsBtn = TextView(this).apply {
@@ -422,13 +422,13 @@ class MainActivity : AppCompatActivity() {
             textSize = 12f
             gravity = Gravity.CENTER
             setTextColor(Color.parseColor("#D9B85B"))
-            setPadding(0, 0, 0, 18)
+            setPadding(0, 0, 0, dp(12))
         })
 
         val searchPanel = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(18, 5, 18, 5)
+            setPadding(dp(14), dp(4), dp(14), dp(4))
             background = yadinoPanelBackground(30f)
         }
         searchPanel.addView(TextView(this).apply {
@@ -436,7 +436,7 @@ class MainActivity : AppCompatActivity() {
             textSize = 30f
             setTextColor(Color.parseColor(COLOR_GOLD))
             gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(42, 54))
+        }, LinearLayout.LayoutParams(dp(42), dp(58)))
         searchInput = EditText(this).apply {
             hint = "جستجو در یادداشت‌ها..."
             textSize = 14f
@@ -451,13 +451,13 @@ class MainActivity : AppCompatActivity() {
                 override fun afterTextChanged(s: android.text.Editable?) = Unit
             })
         }
-        searchPanel.addView(searchInput, LinearLayout.LayoutParams(0, 54, 1f))
+        searchPanel.addView(searchInput, LinearLayout.LayoutParams(0, dp(58), 1f))
         searchPanel.addView(TextView(this).apply {
             text = "⚲"
             textSize = 23f
             setTextColor(Color.parseColor(COLOR_GOLD))
             gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(42, 54))
+        }, LinearLayout.LayoutParams(dp(42), dp(58)))
         content.addView(searchPanel, matchWidth())
 
         val shortcutGrid = GridLayout(this).apply {
@@ -469,7 +469,7 @@ class MainActivity : AppCompatActivity() {
             val tile = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
-                setPadding(12, 16, 12, 16)
+                setPadding(dp(8), dp(10), dp(8), dp(10))
                 background = yadinoPanelBackground(26f)
                 isClickable = true
                 isFocusable = true
@@ -496,9 +496,9 @@ class MainActivity : AppCompatActivity() {
             })
             val params = GridLayout.LayoutParams().apply {
                 width = 0
-                height = ViewGroup.LayoutParams.WRAP_CONTENT
+                height = dp(112)
                 columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                setMargins(5, 5, 5, 5)
+                setMargins(dp(4), dp(4), dp(4), dp(4))
             }
             shortcutGrid.addView(tile, params)
         }
@@ -515,7 +515,72 @@ class MainActivity : AppCompatActivity() {
             if (ideaIndex >= 0) filterSpinner.setSelection(ideaIndex)
             else Toast.makeText(this, "ابتدا دسته «ایده‌ها» را از تنظیمات بساز.", Toast.LENGTH_SHORT).show()
         }
+
         content.addView(shortcutGrid, matchWidth())
+
+        val uncategorizedCard = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            background = yadinoPanelBackground(26f)
+            setPadding(dp(18), dp(10), dp(18), dp(10))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                val index = filterOptions().indexOf(noCategoryLabel)
+                if (index >= 0) filterSpinner.setSelection(index)
+            }
+        }
+        uncategorizedCard.addView(TextView(this).apply {
+            text = "⊘"
+            textSize = 28f
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor(COLOR_GOLD))
+        }, LinearLayout.LayoutParams(dp(58), dp(48)))
+        uncategorizedCard.addView(TextView(this).apply {
+            text = "بدون دسته"
+            textSize = 16f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor("#F5D77E"))
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        uncategorizedCard.addView(TextView(this).apply {
+            text = "›"
+            textSize = 30f
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor(COLOR_GOLD))
+        }, LinearLayout.LayoutParams(dp(36), dp(48)))
+        val uncategorizedParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(76)
+        ).apply { topMargin = dp(4) }
+        content.addView(uncategorizedCard, uncategorizedParams)
+
+        val recentDivider = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(10), 0, dp(2))
+        }
+        recentDivider.addView(View(this).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(Color.TRANSPARENT, Color.parseColor("#E7B83D"), Color.TRANSPARENT)
+            )
+        }, LinearLayout.LayoutParams(0, dp(1), 1f))
+        recentDivider.addView(TextView(this).apply {
+            text = "یادداشت‌های اخیر"
+            textSize = 20f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor("#F1C75B"))
+            setPadding(dp(12), 0, dp(12), 0)
+        })
+        recentDivider.addView(View(this).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(Color.TRANSPARENT, Color.parseColor("#E7B83D"), Color.TRANSPARENT)
+            )
+        }, LinearLayout.LayoutParams(0, dp(1), 1f))
+        content.addView(recentDivider, matchWidth())
 
         formContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -706,14 +771,6 @@ class MainActivity : AppCompatActivity() {
 
         content.addView(formContainer)
 
-        content.addView(TextView(this).apply {
-            text = "یادداشت‌های اخیر"
-            textSize = 21f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#F1C75B"))
-            setPadding(0, 22, 0, 12)
-        })
         filterSpinner = Spinner(this)
         filterSpinner.adapter = spinnerAdapter(filterOptions())
         filterSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -740,11 +797,11 @@ class MainActivity : AppCompatActivity() {
         val landscape = ImageView(this).apply {
             setImageResource(R.drawable.yadino_landscape)
             scaleType = ImageView.ScaleType.CENTER_CROP
-            alpha = 0.92f
+            alpha = 1.0f
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         root.addView(landscape, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(190), Gravity.BOTTOM
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(258), Gravity.BOTTOM
         ))
 
         mainScroll.clipToPadding = false
@@ -771,8 +828,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
         val fabParams = FrameLayout.LayoutParams(dp(58), dp(58)).apply {
-            gravity = Gravity.BOTTOM or Gravity.END
-            setMargins(dp(20), dp(20), dp(22), dp(94))
+            gravity = Gravity.BOTTOM or Gravity.RIGHT
+            setMargins(dp(18), dp(18), dp(18), dp(98))
         }
         root.addView(fab, fabParams)
 
@@ -812,9 +869,9 @@ class MainActivity : AppCompatActivity() {
         addBottomItem("⚙", "تنظیمات") { showSettingsDialog() }
         addBottomItem("•••", "بیشتر") { showCustomListDialog("بیشتر", arrayOf("مدیریت دسته‌ها", "تنظیمات")) { showSettingsDialog() } }
         root.addView(bottomBar, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(72),
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(76),
             Gravity.BOTTOM
-        ).apply { setMargins(dp(14), 0, dp(14), dp(12)) })
+        ).apply { setMargins(dp(14), 0, dp(14), dp(10)) })
 
         setContentView(root)
     }
