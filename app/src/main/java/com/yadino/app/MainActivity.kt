@@ -188,6 +188,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var titleInput: EditText
     private lateinit var bodyInput: EditText
+    private lateinit var bodyCharCounter: TextView
     private lateinit var categorySpinner: Spinner
     private lateinit var privateCheckBox: CheckBox
     // محرر دیداری کارها؛ کاربر دیگر نیازی به تایپ علامت سربرگ ندارد.
@@ -199,6 +200,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var noteAdapter: NoteAdapter
     private lateinit var filterSpinner: Spinner
     private lateinit var searchInput: EditText
+    private var quickFilterMode: String = "all" // all | with_tasks | with_reminder | private_only
     private lateinit var reminderSummary: TextView
     private lateinit var formContainer: LinearLayout
     private lateinit var mainScroll: ScrollView
@@ -355,8 +357,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-
     private fun buildScreen() {
         val rootBg = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
@@ -371,7 +371,7 @@ class MainActivity : AppCompatActivity() {
         mainScroll = ScrollView(this)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(10), dp(14), dp(176))
+            setPadding(24, 28, 24, 190)
         }
 
         val headerRow = LinearLayout(this).apply {
@@ -382,7 +382,7 @@ class MainActivity : AppCompatActivity() {
 
         val titleTv = TextView(this).apply {
             text = "یادینو"
-            textSize = 36f
+            textSize = 48f
             gravity = Gravity.CENTER
             typeface = Typeface.create("sans-serif-black", Typeface.BOLD)
             letterSpacing = 0.05f
@@ -400,18 +400,14 @@ class MainActivity : AppCompatActivity() {
             titleTv.invalidate()
         }
         
-        val brandLogo = ImageView(this).apply {
-            setImageResource(R.drawable.yadino_logo)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            contentDescription = "لوگوی یادینو"
-        }
-        headerRow.addView(brandLogo, LinearLayout.LayoutParams(dp(62), dp(72)))
-        headerRow.addView(titleTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f))
+        headerRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        headerRow.addView(titleTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         
         val settingsBtn = TextView(this).apply {
             text = "⚙️"
             textSize = 32f
             gravity = Gravity.CENTER
+            contentDescription = "تنظیمات"
             setOnClickListener { showSettingsDialog() }
         }
         headerRow.addView(settingsBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -422,13 +418,13 @@ class MainActivity : AppCompatActivity() {
             textSize = 12f
             gravity = Gravity.CENTER
             setTextColor(Color.parseColor("#D9B85B"))
-            setPadding(0, 0, 0, dp(12))
+            setPadding(0, 0, 0, 18)
         })
 
         val searchPanel = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(4), dp(14), dp(4))
+            setPadding(18, 5, 18, 5)
             background = yadinoPanelBackground(30f)
         }
         searchPanel.addView(TextView(this).apply {
@@ -436,7 +432,7 @@ class MainActivity : AppCompatActivity() {
             textSize = 30f
             setTextColor(Color.parseColor(COLOR_GOLD))
             gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(dp(42), dp(58)))
+        }, LinearLayout.LayoutParams(42, 54))
         searchInput = EditText(this).apply {
             hint = "جستجو در یادداشت‌ها..."
             textSize = 14f
@@ -451,13 +447,18 @@ class MainActivity : AppCompatActivity() {
                 override fun afterTextChanged(s: android.text.Editable?) = Unit
             })
         }
-        searchPanel.addView(searchInput, LinearLayout.LayoutParams(0, dp(58), 1f))
-        searchPanel.addView(TextView(this).apply {
+        searchPanel.addView(searchInput, LinearLayout.LayoutParams(0, 54, 1f))
+        val filterActionBtn = TextView(this).apply {
             text = "⚲"
             textSize = 23f
             setTextColor(Color.parseColor(COLOR_GOLD))
             gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(dp(42), dp(58)))
+            isClickable = true
+            isFocusable = true
+            contentDescription = "فیلتر سریع یادداشت‌ها"
+            setOnClickListener { showQuickFilterDialog() }
+        }
+        searchPanel.addView(filterActionBtn, LinearLayout.LayoutParams(42, 54))
         content.addView(searchPanel, matchWidth())
 
         val shortcutGrid = GridLayout(this).apply {
@@ -469,7 +470,7 @@ class MainActivity : AppCompatActivity() {
             val tile = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
-                setPadding(dp(8), dp(10), dp(8), dp(10))
+                setPadding(12, 16, 12, 16)
                 background = yadinoPanelBackground(26f)
                 isClickable = true
                 isFocusable = true
@@ -496,15 +497,22 @@ class MainActivity : AppCompatActivity() {
             })
             val params = GridLayout.LayoutParams().apply {
                 width = 0
-                height = dp(112)
+                height = ViewGroup.LayoutParams.WRAP_CONTENT
                 columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                setMargins(dp(4), dp(4), dp(4), dp(4))
+                setMargins(5, 5, 5, 5)
             }
             shortcutGrid.addView(tile, params)
         }
         addShortcut("▦", "کارهای امروز", "مرور برنامه‌ها") {
+            quickFilterMode = if (quickFilterMode == "with_tasks") "all" else "with_tasks"
             filterSpinner.setSelection(0)
-            Toast.makeText(this, "یادداشت‌های دارای کار در فهرست نمایش داده می‌شوند.", Toast.LENGTH_SHORT).show()
+            renderNotes()
+            val msg = if (quickFilterMode == "with_tasks") {
+                "فیلتر یادداشت‌های دارای کار فعال شد."
+            } else {
+                "نمایش همه یادداشت‌ها فعال شد."
+            }
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
         }
         addShortcut("★", "علاقه‌مندی‌ها", "یادداشت‌های منتخب") {
             Toast.makeText(this, "بخش علاقه‌مندی‌ها در مرحله بعد به مدل یادداشت اضافه می‌شود.", Toast.LENGTH_SHORT).show()
@@ -515,72 +523,7 @@ class MainActivity : AppCompatActivity() {
             if (ideaIndex >= 0) filterSpinner.setSelection(ideaIndex)
             else Toast.makeText(this, "ابتدا دسته «ایده‌ها» را از تنظیمات بساز.", Toast.LENGTH_SHORT).show()
         }
-
         content.addView(shortcutGrid, matchWidth())
-
-        val uncategorizedCard = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-            background = yadinoPanelBackground(26f)
-            setPadding(dp(18), dp(10), dp(18), dp(10))
-            isClickable = true
-            isFocusable = true
-            setOnClickListener {
-                val index = filterOptions().indexOf(noCategoryLabel)
-                if (index >= 0) filterSpinner.setSelection(index)
-            }
-        }
-        uncategorizedCard.addView(TextView(this).apply {
-            text = "⊘"
-            textSize = 28f
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor(COLOR_GOLD))
-        }, LinearLayout.LayoutParams(dp(58), dp(48)))
-        uncategorizedCard.addView(TextView(this).apply {
-            text = "بدون دسته"
-            textSize = 16f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#F5D77E"))
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        uncategorizedCard.addView(TextView(this).apply {
-            text = "›"
-            textSize = 30f
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor(COLOR_GOLD))
-        }, LinearLayout.LayoutParams(dp(36), dp(48)))
-        val uncategorizedParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(76)
-        ).apply { topMargin = dp(4) }
-        content.addView(uncategorizedCard, uncategorizedParams)
-
-        val recentDivider = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(10), 0, dp(2))
-        }
-        recentDivider.addView(View(this).apply {
-            background = GradientDrawable(
-                GradientDrawable.Orientation.LEFT_RIGHT,
-                intArrayOf(Color.TRANSPARENT, Color.parseColor("#E7B83D"), Color.TRANSPARENT)
-            )
-        }, LinearLayout.LayoutParams(0, dp(1), 1f))
-        recentDivider.addView(TextView(this).apply {
-            text = "یادداشت‌های اخیر"
-            textSize = 20f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#F1C75B"))
-            setPadding(dp(12), 0, dp(12), 0)
-        })
-        recentDivider.addView(View(this).apply {
-            background = GradientDrawable(
-                GradientDrawable.Orientation.LEFT_RIGHT,
-                intArrayOf(Color.TRANSPARENT, Color.parseColor("#E7B83D"), Color.TRANSPARENT)
-            )
-        }, LinearLayout.LayoutParams(0, dp(1), 1f))
-        content.addView(recentDivider, matchWidth())
 
         formContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -631,7 +574,22 @@ class MainActivity : AppCompatActivity() {
         bodyInput = EditText(this).apply { hint = "متن یادداشت"; minLines = 3; gravity = Gravity.TOP or Gravity.RIGHT }
         styleInput(bodyInput)
         bodyInput.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) speechTarget = bodyInput }
-        formContainer.addView(bodyInput, matchWidth())
+        bodyCharCounter = TextView(this).apply {
+            text = "۰ کاراکتر"
+            textSize = 12f
+            setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+            gravity = Gravity.LEFT
+            setPadding(12, 4, 12, 16)
+        }
+        bodyInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                bodyCharCounter.text = "${s?.length ?: 0} کاراکتر"
+            }
+            override fun afterTextChanged(s: android.text.Editable?) = Unit
+        })
+        formContainer.addView(bodyInput, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        formContainer.addView(bodyCharCounter)
 
         categorySpinner = Spinner(this)
         categorySpinner.adapter = spinnerAdapter(categoryOptions())
@@ -771,6 +729,14 @@ class MainActivity : AppCompatActivity() {
 
         content.addView(formContainer)
 
+        content.addView(TextView(this).apply {
+            text = "یادداشت‌های اخیر"
+            textSize = 21f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor("#F1C75B"))
+            setPadding(0, 22, 0, 12)
+        })
         filterSpinner = Spinner(this)
         filterSpinner.adapter = spinnerAdapter(filterOptions())
         filterSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -793,43 +759,27 @@ class MainActivity : AppCompatActivity() {
         notesRecyclerView.adapter = noteAdapter
         content.addView(notesRecyclerView, matchWidth())
 
-        // منظره کوهستان در لایه پشتی است؛ محتوای برنامه همچنان واقعی و تعاملی می‌ماند.
-        val landscape = ImageView(this).apply {
-            setImageResource(R.drawable.yadino_landscape)
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            alpha = 1.0f
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
-        root.addView(landscape, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(258), Gravity.BOTTOM
-        ))
-
-        mainScroll.clipToPadding = false
-        mainScroll.isFillViewport = false
         mainScroll.addView(content)
-        root.addView(mainScroll, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
-        ))
+        root.addView(mainScroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
         fab = FloatingActionButton(this).apply {
             setImageResource(android.R.drawable.ic_input_add)
-            imageTintList = ColorStateList.valueOf(Color.parseColor("#17120A"))
-            backgroundTintList = ColorStateList.valueOf(Color.parseColor("#E8B936"))
-            compatElevation = dp(10).toFloat()
-            size = FloatingActionButton.SIZE_NORMAL
-            contentDescription = "افزودن یادداشت"
+            imageTintList = ColorStateList.valueOf(Color.parseColor(COLOR_BG_BOTTOM)) 
+            backgroundTintList = ColorStateList.valueOf(Color.parseColor(COLOR_GOLD))
+            compatElevation = 25f
+            
             setOnClickListener { view ->
-                view.animate().rotation(90f).setDuration(160).withEndAction {
+                view.animate().rotation(90f).setDuration(200).withEndAction {
                     formContainer.visibility = View.VISIBLE
                     fab.hide()
-                    mainScroll.post { mainScroll.smoothScrollTo(0, 0) }
-                    view.rotation = 0f
+                    mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) }
+                    view.animate().rotation(0f).setDuration(0).start()
                 }.start()
             }
         }
-        val fabParams = FrameLayout.LayoutParams(dp(58), dp(58)).apply {
-            gravity = Gravity.BOTTOM or Gravity.RIGHT
-            setMargins(dp(18), dp(18), dp(18), dp(98))
+        val fabParams = FrameLayout.LayoutParams(170, 170).apply { 
+            gravity = Gravity.BOTTOM or Gravity.START
+            setMargins(50, 50, 50, 100) 
         }
         root.addView(fab, fabParams)
 
@@ -837,43 +787,86 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             layoutDirection = View.LAYOUT_DIRECTION_RTL
-            background = yadinoPanelBackground(30f)
-            setPadding(dp(6), dp(5), dp(6), dp(5))
-            elevation = dp(12).toFloat()
+            background = yadinoPanelBackground(34f)
+            setPadding(8, 8, 8, 8)
+            elevation = 24f
         }
-        fun addBottomItem(icon: String, label: String, action: () -> Unit) {
+        val bottomItems = mutableListOf<Pair<LinearLayout, TextView>>()
+        fun highlightBottomTab(activeIndex: Int) {
+            bottomItems.forEachIndexed { idx, (container, labelView) ->
+                if (idx == activeIndex) {
+                    container.background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#2A2210"))
+                        cornerRadius = 24f
+                        setStroke(1, Color.parseColor(COLOR_GOLD))
+                    }
+                    labelView.setTextColor(Color.parseColor("#FFD86B"))
+                    labelView.typeface = Typeface.DEFAULT_BOLD
+                } else {
+                    container.background = null
+                    labelView.setTextColor(Color.parseColor("#E9D18A"))
+                    labelView.typeface = Typeface.DEFAULT
+                }
+            }
+        }
+        fun addBottomItem(index: Int, icon: String, label: String, action: () -> Unit) {
             val item = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
-                setPadding(dp(5), dp(5), dp(5), dp(5))
+                setPadding(6, 8, 6, 8)
                 isClickable = true
                 isFocusable = true
-                setOnClickListener { action() }
             }
             item.addView(TextView(this).apply {
                 text = icon
-                textSize = 20f
+                textSize = 22f
                 gravity = Gravity.CENTER
                 setTextColor(Color.parseColor(COLOR_GOLD))
             })
-            item.addView(TextView(this).apply {
+            val labelTv = TextView(this).apply {
                 text = label
-                textSize = 9f
+                textSize = 10f
                 gravity = Gravity.CENTER
                 setTextColor(Color.parseColor("#E9D18A"))
-            })
+            }
+            item.addView(labelTv)
+            bottomItems.add(item to labelTv)
+            item.setOnClickListener {
+                highlightBottomTab(index)
+                action()
+            }
             bottomBar.addView(item, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
-        addBottomItem("▤", "یادداشت‌ها") { mainScroll.smoothScrollTo(0, 0) }
-        addBottomItem("★", "ویژگی‌ها") { showSettingsDialog() }
-        addBottomItem("⚙", "تنظیمات") { showSettingsDialog() }
-        addBottomItem("•••", "بیشتر") { showCustomListDialog("بیشتر", arrayOf("مدیریت دسته‌ها", "تنظیمات")) { showSettingsDialog() } }
+        addBottomItem(0, "▤", "یادداشت‌ها") { mainScroll.smoothScrollTo(0, 0) }
+        addBottomItem(1, "★", "ویژگی‌ها") { showSettingsDialog() }
+        addBottomItem(2, "⚙", "تنظیمات") { showSettingsDialog() }
+        addBottomItem(3, "•••", "بیشتر") { showCustomListDialog("بیشتر", arrayOf("مدیریت دسته‌ها", "تنظیمات")) { showSettingsDialog() } }
+        highlightBottomTab(0)
         root.addView(bottomBar, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(76),
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
             Gravity.BOTTOM
-        ).apply { setMargins(dp(14), 0, dp(14), dp(10)) })
+        ).apply { setMargins(20, 0, 20, 18) })
 
         setContentView(root)
+    }
+
+    private fun showQuickFilterDialog() {
+        val options = arrayOf(
+            "همه یادداشت‌ها",
+            "فقط یادداشت‌های دارای کار",
+            "فقط یادداشت‌های دارای یادآور",
+            "فقط یادداشت‌های خصوصی"
+        )
+        showCustomListDialog("فیلتر سریع یادداشت‌ها", options) { which ->
+            quickFilterMode = when (which) {
+                1 -> "with_tasks"
+                2 -> "with_reminder"
+                3 -> "private_only"
+                else -> "all"
+            }
+            renderNotes()
+            Toast.makeText(this, "فیلتر «${options[which]}» اعمال شد.", Toast.LENGTH_SHORT).show()
+        }
     }
 
     // 🔧 تابع رفرش کردن عکس‌های انتخاب شده در فرم
@@ -996,7 +989,13 @@ private fun showSettingsDialog() {
                 note.title.contains(query, ignoreCase = true) ||
                 note.body.contains(query, ignoreCase = true) ||
                 note.category.contains(query, ignoreCase = true)
-            matchesSearch && when (selectedCategory) {
+            val matchesQuickFilter = when (quickFilterMode) {
+                "with_tasks" -> note.tasks.any { !it.isGroupHeader }
+                "with_reminder" -> note.reminderEnabled && note.reminderAt > 0L
+                "private_only" -> note.isPrivate
+                else -> true
+            }
+            matchesSearch && matchesQuickFilter && when (selectedCategory) {
                 allCategoriesLabel -> true
                 noCategoryLabel -> note.category.isBlank() || note.category !in categories
                 else -> note.category == selectedCategory
@@ -2063,6 +2062,7 @@ private fun showSettingsDialog() {
 
     private fun clearForm() {
         titleInput.text.clear(); bodyInput.text.clear(); taskInput.text.clear()
+        bodyCharCounter.text = "۰ کاراکتر"
         taskDraftTasks.clear()
         collapsedTaskGroupIds.clear()
         refreshTaskDraftEditor()
@@ -2383,6 +2383,7 @@ private fun showSettingsDialog() {
 
     private fun editNote(note: Note) {
         editingNoteId = note.id; titleInput.setText(note.title); bodyInput.setText(note.body)
+        bodyCharCounter.text = "${note.body.length} کاراکتر"
         privateCheckBox.isChecked = note.isPrivate
         val formCategories = categoryOptions()
         val categoryIndex = formCategories.indexOf(if (note.category.isBlank()) noCategoryLabel else note.category)
