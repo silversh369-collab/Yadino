@@ -15,8 +15,17 @@ import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
+import android.graphics.LinearGradient
+import android.graphics.Path
+import android.graphics.PixelFormat
+import android.graphics.RadialGradient
+import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
@@ -204,6 +213,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var reminderSummary: TextView
     private lateinit var formContainer: LinearLayout
     private lateinit var mainScroll: ScrollView
+    private lateinit var mountainOverlayView: View
     private lateinit var securePrefs: android.content.SharedPreferences
     private lateinit var draftImagesContainer: LinearLayout
 
@@ -357,6 +367,195 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun goldAmbientGlowDrawable(): Drawable {
+        return object : Drawable() {
+            private val topGlowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+            private val midGlowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+            private val streakPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = 3f
+            }
+
+            override fun draw(canvas: Canvas) {
+                val w = bounds.width().toFloat()
+                val h = bounds.height().toFloat()
+                if (w <= 0f || h <= 0f) return
+
+                topGlowPaint.shader = RadialGradient(
+                    w * 0.5f, h * 0.11f, w * 0.65f,
+                    intArrayOf(Color.parseColor("#44D4AF37"), Color.parseColor("#18AA8B2B"), Color.TRANSPARENT),
+                    floatArrayOf(0f, 0.55f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(bounds, topGlowPaint)
+
+                midGlowPaint.shader = RadialGradient(
+                    w * 0.82f, h * 0.45f, w * 0.55f,
+                    intArrayOf(Color.parseColor("#22F3E5AB"), Color.TRANSPARENT),
+                    null,
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(bounds, midGlowPaint)
+
+                streakPaint.shader = LinearGradient(
+                    0f, h * 0.14f, w, h * 0.24f,
+                    intArrayOf(Color.TRANSPARENT, Color.parseColor("#45FFD86B"), Color.TRANSPARENT),
+                    null,
+                    Shader.TileMode.CLAMP
+                )
+                val wavePath = Path().apply {
+                    moveTo(0f, h * 0.16f)
+                    cubicTo(w * 0.3f, h * 0.11f, w * 0.68f, h * 0.23f, w, h * 0.15f)
+                }
+                canvas.drawPath(wavePath, streakPaint)
+            }
+
+            override fun setAlpha(alpha: Int) {
+                topGlowPaint.alpha = alpha
+                midGlowPaint.alpha = alpha
+                streakPaint.alpha = alpha
+            }
+
+            override fun setColorFilter(colorFilter: ColorFilter?) {
+                topGlowPaint.colorFilter = colorFilter
+                midGlowPaint.colorFilter = colorFilter
+                streakPaint.colorFilter = colorFilter
+            }
+
+            @Deprecated("Deprecated in Java")
+            override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+        }
+    }
+
+    private fun mountainSilhouetteDrawable(): Drawable {
+        return object : Drawable() {
+            private val horizonGlowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+            private val backRangePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#88171208")
+            }
+            private val frontRangePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#CC080604")
+            }
+            private val ridgeHighlightPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = 2.5f
+                color = Color.parseColor("#77F3D06B")
+            }
+
+            override fun draw(canvas: Canvas) {
+                val w = bounds.width().toFloat()
+                val h = bounds.height().toFloat()
+                if (w <= 0f || h <= 0f) return
+
+                horizonGlowPaint.shader = RadialGradient(
+                    w * 0.5f, h * 0.68f, w * 0.68f,
+                    intArrayOf(Color.parseColor("#66E5B842"), Color.parseColor("#22AA8B2B"), Color.TRANSPARENT),
+                    null,
+                    Shader.TileMode.CLAMP
+                )
+                canvas.drawRect(bounds, horizonGlowPaint)
+
+                val backPath = Path().apply {
+                    moveTo(0f, h)
+                    lineTo(0f, h * 0.62f)
+                    lineTo(w * 0.18f, h * 0.36f)
+                    lineTo(w * 0.36f, h * 0.54f)
+                    lineTo(w * 0.58f, h * 0.28f)
+                    lineTo(w * 0.78f, h * 0.50f)
+                    lineTo(w, h * 0.34f)
+                    lineTo(w, h)
+                    close()
+                }
+                canvas.drawPath(backPath, backRangePaint)
+
+                val frontPath = Path().apply {
+                    moveTo(0f, h)
+                    lineTo(0f, h * 0.72f)
+                    lineTo(w * 0.24f, h * 0.48f)
+                    lineTo(w * 0.45f, h * 0.66f)
+                    lineTo(w * 0.70f, h * 0.42f)
+                    lineTo(w * 0.88f, h * 0.60f)
+                    lineTo(w, h * 0.46f)
+                    lineTo(w, h)
+                    close()
+                }
+                canvas.drawPath(frontPath, frontRangePaint)
+                canvas.drawPath(frontPath, ridgeHighlightPaint)
+            }
+
+            override fun setAlpha(alpha: Int) {
+                horizonGlowPaint.alpha = alpha
+                backRangePaint.alpha = alpha
+                frontRangePaint.alpha = alpha
+                ridgeHighlightPaint.alpha = alpha
+            }
+
+            override fun setColorFilter(colorFilter: ColorFilter?) {
+                horizonGlowPaint.colorFilter = colorFilter
+                backRangePaint.colorFilter = colorFilter
+                frontRangePaint.colorFilter = colorFilter
+                ridgeHighlightPaint.colorFilter = colorFilter
+            }
+
+            @Deprecated("Deprecated in Java")
+            override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+        }
+    }
+
+    private fun featherNotebookDrawable(): Drawable {
+        return object : Drawable() {
+            private val goldPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+            private val darkLinePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = 2f
+                color = Color.parseColor("#553A1802")
+            }
+
+            override fun draw(canvas: Canvas) {
+                val w = bounds.width().toFloat()
+                val h = bounds.height().toFloat()
+                if (w <= 0f || h <= 0f) return
+
+                goldPaint.shader = LinearGradient(
+                    0f, 0f, w, h,
+                    intArrayOf(Color.parseColor("#FFF0A8"), Color.parseColor("#D4AF37"), Color.parseColor("#8A6212")),
+                    null,
+                    Shader.TileMode.CLAMP
+                )
+
+                val bookRect = RectF(w * 0.16f, h * 0.56f, w * 0.84f, h * 0.88f)
+                canvas.drawRoundRect(bookRect, 10f, 10f, goldPaint)
+
+                val featherPath = Path().apply {
+                    moveTo(w * 0.34f, h * 0.68f)
+                    cubicTo(w * 0.28f, h * 0.34f, w * 0.58f, h * 0.10f, w * 0.84f, h * 0.12f)
+                    cubicTo(w * 0.78f, h * 0.38f, w * 0.62f, h * 0.58f, w * 0.42f, h * 0.66f)
+                    close()
+                }
+                canvas.drawPath(featherPath, goldPaint)
+                canvas.drawLine(w * 0.30f, h * 0.74f, w * 0.80f, h * 0.16f, darkLinePaint)
+            }
+
+            override fun setAlpha(alpha: Int) {
+                goldPaint.alpha = alpha
+                darkLinePaint.alpha = alpha
+            }
+
+            override fun setColorFilter(colorFilter: ColorFilter?) {
+                goldPaint.colorFilter = colorFilter
+                darkLinePaint.colorFilter = colorFilter
+            }
+
+            @Deprecated("Deprecated in Java")
+            override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+        }
+    }
+
+    private fun updateMountainVisibilityForForm() {
+        if (!::mountainOverlayView.isInitialized || !::formContainer.isInitialized) return
+        mountainOverlayView.alpha = if (formContainer.visibility == View.VISIBLE) 0.25f else 0.85f
+    }
+
     private fun buildScreen() {
         val rootBg = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
@@ -367,6 +566,24 @@ class MainActivity : AppCompatActivity() {
             background = rootBg
             layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
+
+        val ambientGlowView = View(this).apply {
+            background = goldAmbientGlowDrawable()
+            isClickable = false
+            isFocusable = false
+        }
+        root.addView(ambientGlowView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        mountainOverlayView = View(this).apply {
+            background = mountainSilhouetteDrawable()
+            alpha = 0.85f
+            isClickable = false
+            isFocusable = false
+        }
+        root.addView(mountainOverlayView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 300).apply {
+            gravity = Gravity.BOTTOM
+            setMargins(0, 0, 0, 110)
+        })
 
         mainScroll = ScrollView(this)
         val content = LinearLayout(this).apply {
@@ -379,6 +596,14 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             weightSum = 3f
         }
+
+        val brandMarkView = ImageView(this).apply {
+            setImageDrawable(featherNotebookDrawable())
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            contentDescription = "نشان یادینو"
+            setOnClickListener { mainScroll.smoothScrollTo(0, 0) }
+        }
+        headerRow.addView(brandMarkView, LinearLayout.LayoutParams(0, 96, 1f))
 
         val titleTv = TextView(this).apply {
             text = "یادینو"
@@ -400,7 +625,6 @@ class MainActivity : AppCompatActivity() {
             titleTv.invalidate()
         }
         
-        headerRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         headerRow.addView(titleTv, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         
         val settingsBtn = TextView(this).apply {
@@ -722,6 +946,7 @@ class MainActivity : AppCompatActivity() {
             background = null
             setOnClickListener { 
                 formContainer.visibility = View.GONE
+                updateMountainVisibilityForForm()
                 fab.show()
                 clearForm() 
             }
@@ -771,6 +996,7 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { view ->
                 view.animate().rotation(90f).setDuration(200).withEndAction {
                     formContainer.visibility = View.VISIBLE
+                    updateMountainVisibilityForForm()
                     fab.hide()
                     mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) }
                     view.animate().rotation(0f).setDuration(0).start()
@@ -960,6 +1186,7 @@ private fun showSettingsDialog() {
 
     private fun showForm() { 
         formContainer.visibility = View.VISIBLE
+        updateMountainVisibilityForForm()
         fab.hide()
         mainScroll.post { mainScroll.fullScroll(View.FOCUS_UP) } 
     }
@@ -2056,6 +2283,7 @@ private fun showSettingsDialog() {
 
         saveNotes(); renderNotes(); clearForm(); 
         formContainer.visibility = View.GONE
+        updateMountainVisibilityForForm()
         fab.show()
         Toast.makeText(this, "ذخیره شد", Toast.LENGTH_SHORT).show()
     }
